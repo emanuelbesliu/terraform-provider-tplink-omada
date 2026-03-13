@@ -145,12 +145,23 @@ func (r *WirelessNetworkResource) Create(ctx context.Context, req resource.Creat
 	}
 
 	ssid := &client.WirelessNetwork{
-		Name:      plan.Name.ValueString(),
-		Band:      int(plan.Band.ValueInt64()),
-		Security:  int(plan.Security.ValueInt64()),
-		Broadcast: plan.Broadcast.ValueBool(),
-		Enable11r: plan.Enable11r.ValueBool(),
-		PmfMode:   int(plan.PmfMode.ValueInt64()),
+		Name:               plan.Name.ValueString(),
+		Band:               int(plan.Band.ValueInt64()),
+		Security:           int(plan.Security.ValueInt64()),
+		Broadcast:          plan.Broadcast.ValueBool(),
+		Enable11r:          plan.Enable11r.ValueBool(),
+		PmfMode:            int(plan.PmfMode.ValueInt64()),
+		WlanScheduleEnable: false,
+		MacFilterEnable:    false,
+		RateLimit:          &client.RateLimit{},
+		SSIDRateLimit:      &client.RateLimit{},
+		RateAndBeaconCtrl:  &client.RateAndBeaconCtrl{},
+		MultiCastSetting: &client.MultiCastSetting{
+			MultiCastEnable: true,
+			ChannelUtil:     100,
+			ArpCastEnable:   true,
+			Ipv6CastEnable:  true,
+		},
 	}
 
 	if !plan.Passphrase.IsNull() && !plan.Passphrase.IsUnknown() {
@@ -162,11 +173,27 @@ func (r *WirelessNetworkResource) Create(ctx context.Context, req resource.Creat
 	}
 
 	if !plan.VlanID.IsNull() && !plan.VlanID.IsUnknown() {
+		vlanID := int(plan.VlanID.ValueInt64())
+		customConfig := &client.CustomConfig{
+			BridgeVlan: vlanID,
+		}
+		// Look up the network ID for this VLAN to populate lanNetworkId
+		// (required by the Omada API for SSID creation).
+		networks, err := r.client.ListNetworks(ctx)
+		if err == nil {
+			for _, n := range networks {
+				if n.Vlan == vlanID {
+					customConfig.LanNetworkID = n.ID
+					customConfig.LanNetworkVlanIds = map[string][]int{
+						n.ID: {vlanID},
+					}
+					break
+				}
+			}
+		}
 		ssid.VlanSetting = &client.VlanSetting{
-			Mode: 1,
-			CustomConfig: &client.CustomConfig{
-				BridgeVlan: int(plan.VlanID.ValueInt64()),
-			},
+			Mode:         1,
+			CustomConfig: customConfig,
 		}
 	} else {
 		ssid.VlanSetting = &client.VlanSetting{Mode: 0}

@@ -120,8 +120,8 @@ type Network struct {
 	Vlan            int           `json:"vlan"`
 	GatewaySubnet   string        `json:"gatewaySubnet,omitempty"`
 	DHCPSettings    *DHCPSettings `json:"dhcpSettings,omitempty"`
-	Isolation       bool          `json:"isolation,omitempty"`
-	IGMPSnoopEnable bool          `json:"igmpSnoopEnable,omitempty"`
+	Isolation       bool          `json:"isolation"`
+	IGMPSnoopEnable bool          `json:"igmpSnoopEnable"`
 }
 
 // WlanGroup represents a wireless LAN group.
@@ -151,24 +151,27 @@ type WlanGroupUpdateRequest struct {
 
 // WirelessNetwork represents an SSID/WLAN configuration.
 type WirelessNetwork struct {
-	ID             string       `json:"id,omitempty"`
-	Name           string       `json:"name"`
-	WlanID         string       `json:"wlanId,omitempty"`
-	Band           int          `json:"band"`
-	GuestNetEnable bool         `json:"guestNetEnable,omitempty"`
-	Security       int          `json:"security"`
-	Broadcast      bool         `json:"broadcast"`
-	PSKSetting     *PSKSetting  `json:"pskSetting,omitempty"`
-	VlanSetting    *VlanSetting `json:"vlanSetting,omitempty"`
-	Enable11r      bool         `json:"enable11r,omitempty"`
-	PmfMode        int          `json:"pmfMode,omitempty"`
-	RateLimit      *RateLimit   `json:"rateLimit,omitempty"`
+	ID                 string       `json:"id,omitempty"`
+	Name               string       `json:"name"`
+	WlanID             string       `json:"wlanId,omitempty"`
+	Band               int          `json:"band"`
+	GuestNetEnable     bool         `json:"guestNetEnable"`
+	Security           int          `json:"security"`
+	Broadcast          bool         `json:"broadcast"`
+	PSKSetting         *PSKSetting  `json:"pskSetting,omitempty"`
+	VlanSetting        *VlanSetting `json:"vlanSetting,omitempty"`
+	Enable11r          bool         `json:"enable11r"`
+	PmfMode            int          `json:"pmfMode"`
+	WlanScheduleEnable bool         `json:"wlanScheduleEnable"`
+	MacFilterEnable    bool         `json:"macFilterEnable"`
+	RateLimit          *RateLimit   `json:"rateLimit"`
 
-	// Additional fields needed for full create/update payload
-	RateAndBeaconCtrl json.RawMessage `json:"rateAndBeaconCtrl,omitempty"`
-	MultiCastSetting  json.RawMessage `json:"multiCastSetting,omitempty"`
-	SSIDRateLimit     json.RawMessage `json:"ssidRateLimit,omitempty"`
-	DHCPOption82      json.RawMessage `json:"dhcpOption82,omitempty"`
+	// Additional fields required by the API for create
+	RateAndBeaconCtrl *RateAndBeaconCtrl `json:"rateAndBeaconCtrl,omitempty"`
+	MultiCastSetting  *MultiCastSetting  `json:"multiCastSetting,omitempty"`
+	SSIDRateLimit     *RateLimit         `json:"ssidRateLimit,omitempty"`
+	MloEnable         bool               `json:"mloEnable"`
+	ProhibitWifiShare bool               `json:"prohibitWifiShare"`
 
 	// Store raw JSON for PATCH operations (full object required)
 	RawJSON map[string]interface{} `json:"-"`
@@ -176,9 +179,9 @@ type WirelessNetwork struct {
 
 // PSKSetting holds WPA pre-shared key settings.
 type PSKSetting struct {
-	VersionPsk        int    `json:"versionPsk,omitempty"`
-	EncryptionPsk     int    `json:"encryptionPsk,omitempty"`
-	GikRekeyPskEnable bool   `json:"gikRekeyPskEnable,omitempty"`
+	VersionPsk        int    `json:"versionPsk"`
+	EncryptionPsk     int    `json:"encryptionPsk"`
+	GikRekeyPskEnable bool   `json:"gikRekeyPskEnable"`
 	SecurityKey       string `json:"securityKey"`
 }
 
@@ -192,7 +195,7 @@ type VlanSetting struct {
 
 // CustomConfig holds custom VLAN configuration for an SSID.
 type CustomConfig struct {
-	CustomMode        int              `json:"customMode,omitempty"`
+	CustomMode        int              `json:"customMode"`
 	LanNetworkID      string           `json:"lanNetworkId,omitempty"`
 	LanNetworkVlanIds map[string][]int `json:"lanNetworkVlanIds,omitempty"`
 	BridgeVlan        int              `json:"bridgeVlan,omitempty"`
@@ -200,24 +203,76 @@ type CustomConfig struct {
 
 // RateLimit holds rate limiting configuration.
 type RateLimit struct {
-	RateLimitID string `json:"rateLimitId,omitempty"`
+	RateLimitID     string `json:"rateLimitId,omitempty"`
+	DownLimitEnable bool   `json:"downLimitEnable"`
+	UpLimitEnable   bool   `json:"upLimitEnable"`
+}
+
+// RateAndBeaconCtrl holds rate and beacon control settings for an SSID.
+type RateAndBeaconCtrl struct {
+	Rate2gCtrlEnable          bool `json:"rate2gCtrlEnable"`
+	Rate5gCtrlEnable          bool `json:"rate5gCtrlEnable"`
+	ManageRateControl2gEnable bool `json:"manageRateControl2gEnable"`
+	ManageRateControl5gEnable bool `json:"manageRateControl5gEnable"`
+	Rate6gCtrlEnable          bool `json:"rate6gCtrlEnable"`
+}
+
+// MultiCastSetting holds multicast configuration for an SSID.
+type MultiCastSetting struct {
+	MultiCastEnable bool `json:"multiCastEnable"`
+	ChannelUtil     int  `json:"channelUtil"`
+	ArpCastEnable   bool `json:"arpCastEnable"`
+	Ipv6CastEnable  bool `json:"ipv6CastEnable"`
+	FilterEnable    bool `json:"filterEnable"`
 }
 
 // PortProfile represents a switch port profile.
 type PortProfile struct {
-	ID                   string   `json:"id,omitempty"`
-	Name                 string   `json:"name"`
-	NativeNetworkID      string   `json:"nativeNetworkId,omitempty"`
-	TagNetworkIDs        []string `json:"tagNetworkIds"`
-	UntagNetworkIDs      []string `json:"untagNetworkIds,omitempty"`
-	POE                  int      `json:"poe,omitempty"`
-	Dot1x                int      `json:"dot1x,omitempty"`
-	PortIsolationEnable  bool     `json:"portIsolationEnable,omitempty"`
-	LLDPMedEnable        bool     `json:"lldpMedEnable,omitempty"`
-	TopoNotifyEnable     bool     `json:"topoNotifyEnable,omitempty"`
-	SpanningTreeEnable   bool     `json:"spanningTreeEnable,omitempty"`
-	LoopbackDetectEnable bool     `json:"loopbackDetectEnable,omitempty"`
-	Type                 int      `json:"type,omitempty"`
+	ID                            string               `json:"id,omitempty"`
+	Name                          string               `json:"name"`
+	NativeNetworkID               string               `json:"nativeNetworkId,omitempty"`
+	TagNetworkIDs                 []string             `json:"tagNetworkIds"`
+	UntagNetworkIDs               []string             `json:"untagNetworkIds,omitempty"`
+	POE                           int                  `json:"poe"`
+	Dot1x                         int                  `json:"dot1x"`
+	PortIsolationEnable           bool                 `json:"portIsolationEnable"`
+	LLDPMedEnable                 bool                 `json:"lldpMedEnable"`
+	TopoNotifyEnable              bool                 `json:"topoNotifyEnable"`
+	SpanningTreeEnable            bool                 `json:"spanningTreeEnable"`
+	LoopbackDetectEnable          bool                 `json:"loopbackDetectEnable"`
+	Type                          int                  `json:"type,omitempty"`
+	BandWidthCtrlType             int                  `json:"bandWidthCtrlType"`
+	EeeEnable                     bool                 `json:"eeeEnable"`
+	FlowControlEnable             bool                 `json:"flowControlEnable"`
+	FastLeaveEnable               bool                 `json:"fastLeaveEnable"`
+	LoopbackDetectVlanBasedEnable bool                 `json:"loopbackDetectVlanBasedEnable"`
+	IgmpFastLeaveEnable           bool                 `json:"igmpFastLeaveEnable"`
+	MldFastLeaveEnable            bool                 `json:"mldFastLeaveEnable"`
+	Dot1pPriority                 int                  `json:"dot1pPriority"`
+	TrustMode                     int                  `json:"trustMode"`
+	SpanningTreeSetting           *SpanningTreeSetting `json:"spanningTreeSetting"`
+	DhcpL2RelaySettings           *DhcpL2RelaySettings `json:"dhcpL2RelaySettings"`
+}
+
+// SpanningTreeSetting holds STP settings for a port profile.
+type SpanningTreeSetting struct {
+	Priority    int  `json:"priority"`
+	ExtPathCost int  `json:"extPathCost"`
+	IntPathCost int  `json:"intPathCost"`
+	EdgePort    bool `json:"edgePort"`
+	P2pLink     int  `json:"p2pLink"`
+	Mcheck      bool `json:"mcheck"`
+	LoopProtect bool `json:"loopProtect"`
+	RootProtect bool `json:"rootProtect"`
+	TcGuard     bool `json:"tcGuard"`
+	BpduProtect bool `json:"bpduProtect"`
+	BpduFilter  bool `json:"bpduFilter"`
+	BpduForward bool `json:"bpduForward"`
+}
+
+// DhcpL2RelaySettings holds DHCP L2 relay settings for a port profile.
+type DhcpL2RelaySettings struct {
+	Enable bool `json:"enable"`
 }
 
 // NewClient creates a new Omada API client.
@@ -588,18 +643,43 @@ func (c *Client) GetNetwork(ctx context.Context, networkID string) (*Network, er
 	return nil, fmt.Errorf("network %q not found", networkID)
 }
 
-// CreateNetwork creates a new LAN network.
+// CreateNetwork creates a new LAN network, or adopts an existing one with the
+// same name (the controller auto-creates a "Default" network on site creation).
 func (c *Client) CreateNetwork(ctx context.Context, network *Network) (*Network, error) {
+	// Check for an existing network with the same name (adopt pattern).
+	existing, err := c.ListNetworks(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing networks for adopt check: %w", err)
+	}
+	for _, n := range existing {
+		if n.Name == network.Name {
+			// Adopt: return the existing network instead of creating a duplicate.
+			return &n, nil
+		}
+	}
+
 	resp, err := c.doSiteRequest(ctx, http.MethodPost, "/setting/lan/networks", network)
 	if err != nil {
 		return nil, err
 	}
+
+	// The API may return a full Network object or just a string ID.
+	// Try to unmarshal as a string first (VLAN-only networks return the new ID).
+	var networkID string
+	if err := json.Unmarshal(resp.Result, &networkID); err == nil && networkID != "" {
+		// Got a string ID — do a follow-up GET to retrieve the full object.
+		return c.GetNetwork(ctx, networkID)
+	}
+
+	// Otherwise try to unmarshal as a Network object.
 	var created Network
 	if err := json.Unmarshal(resp.Result, &created); err != nil {
-		return nil, fmt.Errorf("decoding created network: %w", err)
+		return nil, fmt.Errorf("decoding created network (raw: %s): %w", string(resp.Result), err)
 	}
-	// If the API didn't return an ID, we can't look it up — return what we have.
-	return &created, nil
+	if created.ID != "" {
+		return &created, nil
+	}
+	return nil, fmt.Errorf("network created but no ID in response: %s", string(resp.Result))
 }
 
 // UpdateNetwork updates an existing LAN network.
@@ -753,9 +833,19 @@ func (c *Client) CreateWirelessNetwork(ctx context.Context, wlanGroupID string, 
 	if err != nil {
 		return nil, err
 	}
+
+	// The API returns {"ssidId": "<id>"}, not a full SSID object.
+	var createResult struct {
+		SsidID string `json:"ssidId"`
+	}
+	if err := json.Unmarshal(resp.Result, &createResult); err == nil && createResult.SsidID != "" {
+		return c.GetWirelessNetwork(ctx, wlanGroupID, createResult.SsidID)
+	}
+
+	// Fallback: try to unmarshal as a full WirelessNetwork.
 	var created WirelessNetwork
 	if err := json.Unmarshal(resp.Result, &created); err != nil {
-		return nil, fmt.Errorf("decoding created SSID: %w", err)
+		return nil, fmt.Errorf("decoding created SSID (raw: %s): %w", string(resp.Result), err)
 	}
 	return &created, nil
 }
@@ -817,8 +907,23 @@ func (c *Client) GetPortProfile(ctx context.Context, profileID string) (*PortPro
 	return nil, fmt.Errorf("port profile %q not found", profileID)
 }
 
-// CreatePortProfile creates a new port profile.
+// CreatePortProfile creates a new port profile, or adopts an existing one with the same name.
 func (c *Client) CreatePortProfile(ctx context.Context, profile *PortProfile) (*PortProfile, error) {
+	// Check if a profile with this name already exists (adopt pattern).
+	existing, err := c.ListPortProfiles(ctx)
+	if err == nil {
+		for _, p := range existing {
+			if p.Name == profile.Name {
+				// Adopt the existing profile — update it to match desired state.
+				updated, err := c.UpdatePortProfile(ctx, p.ID, profile)
+				if err != nil {
+					return nil, fmt.Errorf("adopting existing port profile %q (%s): %w", p.Name, p.ID, err)
+				}
+				return updated, nil
+			}
+		}
+	}
+
 	resp, err := c.doSiteRequest(ctx, http.MethodPost, "/setting/lan/profiles", profile)
 	if err != nil {
 		return nil, err

@@ -145,6 +145,11 @@ func (r *PortProfileResource) Create(ctx context.Context, req resource.CreateReq
 		TopoNotifyEnable:     plan.TopoNotifyEnable.ValueBool(),
 		SpanningTreeEnable:   plan.SpanningTreeEnable.ValueBool(),
 		LoopbackDetectEnable: plan.LoopbackDetectEnable.ValueBool(),
+		SpanningTreeSetting: &client.SpanningTreeSetting{
+			Priority:    128,
+			BpduForward: true,
+		},
+		DhcpL2RelaySettings: &client.DhcpL2RelaySettings{},
 	}
 
 	if !plan.TagNetworkIDs.IsNull() && !plan.TagNetworkIDs.IsUnknown() {
@@ -219,6 +224,11 @@ func (r *PortProfileResource) Update(ctx context.Context, req resource.UpdateReq
 		TopoNotifyEnable:     plan.TopoNotifyEnable.ValueBool(),
 		SpanningTreeEnable:   plan.SpanningTreeEnable.ValueBool(),
 		LoopbackDetectEnable: plan.LoopbackDetectEnable.ValueBool(),
+		SpanningTreeSetting: &client.SpanningTreeSetting{
+			Priority:    128,
+			BpduForward: true,
+		},
+		DhcpL2RelaySettings: &client.DhcpL2RelaySettings{},
 	}
 
 	if !plan.TagNetworkIDs.IsNull() && !plan.TagNetworkIDs.IsUnknown() {

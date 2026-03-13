@@ -80,7 +80,37 @@ func (r *WlanGroupResource) Create(ctx context.Context, req resource.CreateReque
 		return
 	}
 
-	wlanID, err := r.client.CreateWlanGroup(ctx, plan.Name.ValueString(), false)
+	name := plan.Name.ValueString()
+
+	// The Omada controller auto-creates a "Default" WLAN group when a site is
+	// created.  Check whether a group with the requested name already exists
+	// and adopt it instead of trying to create a duplicate (which would fail
+	// with error -33200).
+	groups, err := r.client.ListWlanGroups(ctx)
+	if err != nil {
+		resp.Diagnostics.AddError("Error listing WLAN groups", err.Error())
+		return
+	}
+
+	var existing *client.WlanGroup
+	for _, g := range groups {
+		if g.Name == name {
+			existing = &g
+			break
+		}
+	}
+
+	if existing != nil {
+		// Adopt the existing group.
+		plan.ID = types.StringValue(existing.ID)
+		plan.Name = types.StringValue(existing.Name)
+		plan.Primary = types.BoolValue(existing.Primary)
+		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+		return
+	}
+
+	// No existing group — create a new one.
+	wlanID, err := r.client.CreateWlanGroup(ctx, name, false)
 	if err != nil {
 		resp.Diagnostics.AddError("Error creating WLAN group", err.Error())
 		return
