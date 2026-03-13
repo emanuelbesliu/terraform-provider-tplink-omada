@@ -480,8 +480,20 @@ func (r *SiteSettingsResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 
+	// Read the config to determine if device_account was explicitly set by the user.
+	var config SiteSettingsResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	// Build the settings object from the plan
 	settings := planToSiteSettings(&plan)
+
+	// Only include deviceAccount if the user explicitly configured both fields.
+	if config.DeviceAccountUsername.IsNull() || config.DeviceAccountPassword.IsNull() {
+		settings.DeviceAccount = nil
+	}
 
 	// PATCH the settings onto the existing site settings
 	updated, err := r.client.UpdateSiteSettings(ctx, settings)
@@ -529,7 +541,23 @@ func (r *SiteSettingsResource) Update(ctx context.Context, req resource.UpdateRe
 		return
 	}
 
+	// Read the config to determine if device_account was explicitly set by the user.
+	// The plan merges state into Optional+Computed attributes, so we can't rely on
+	// plan values alone — we must check the config to know user intent.
+	var config SiteSettingsResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	settings := planToSiteSettings(&plan)
+
+	// Only include deviceAccount in the PATCH if the user explicitly configured both
+	// username and password. The Omada API requires the password on every PATCH that
+	// includes deviceAccount, but the GET response never returns the real password.
+	if config.DeviceAccountUsername.IsNull() || config.DeviceAccountPassword.IsNull() {
+		settings.DeviceAccount = nil
+	}
 
 	updated, err := r.client.UpdateSiteSettings(ctx, settings)
 	if err != nil {
@@ -539,6 +567,11 @@ func (r *SiteSettingsResource) Update(ctx context.Context, req resource.UpdateRe
 
 	plan.ID = state.ID
 	siteSettingsToState(updated, &plan)
+
+	// Preserve the device account password from state — the API returns "***".
+	if !state.DeviceAccountPassword.IsNull() {
+		plan.DeviceAccountPassword = state.DeviceAccountPassword
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }

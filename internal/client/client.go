@@ -479,6 +479,17 @@ func decodePaginatedData(result json.RawMessage, target interface{}) error {
 	return json.Unmarshal(paginated.Data, target)
 }
 
+// isEmptyResult returns true if the API response result is empty, null, or
+// contains only whitespace. The Omada 6.x API sometimes returns an empty
+// result body on successful PATCH operations.
+func isEmptyResult(result json.RawMessage) bool {
+	if len(result) == 0 {
+		return true
+	}
+	trimmed := strings.TrimSpace(string(result))
+	return trimmed == "" || trimmed == "null" || trimmed == "{}" || trimmed == "\"\"" || trimmed == "[]"
+}
+
 // GetSiteID returns the resolved site ID.
 func (c *Client) GetSiteID() string {
 	return c.siteID
@@ -587,6 +598,7 @@ func (c *Client) CreateNetwork(ctx context.Context, network *Network) (*Network,
 	if err := json.Unmarshal(resp.Result, &created); err != nil {
 		return nil, fmt.Errorf("decoding created network: %w", err)
 	}
+	// If the API didn't return an ID, we can't look it up — return what we have.
 	return &created, nil
 }
 
@@ -595,6 +607,9 @@ func (c *Client) UpdateNetwork(ctx context.Context, networkID string, network *N
 	resp, err := c.doSiteRequest(ctx, http.MethodPatch, fmt.Sprintf("/setting/lan/networks/%s", networkID), network)
 	if err != nil {
 		return nil, err
+	}
+	if isEmptyResult(resp.Result) {
+		return c.GetNetwork(ctx, networkID)
 	}
 	var updated Network
 	if err := json.Unmarshal(resp.Result, &updated); err != nil {
@@ -757,6 +772,9 @@ func (c *Client) UpdateWirelessNetwork(ctx context.Context, wlanGroupID, ssidID 
 	if err != nil {
 		return nil, err
 	}
+	if isEmptyResult(resp.Result) {
+		return c.GetWirelessNetwork(ctx, wlanGroupID, ssidID)
+	}
 	var updated WirelessNetwork
 	if err := json.Unmarshal(resp.Result, &updated); err != nil {
 		return nil, fmt.Errorf("decoding updated SSID: %w", err)
@@ -817,6 +835,9 @@ func (c *Client) UpdatePortProfile(ctx context.Context, profileID string, profil
 	resp, err := c.doSiteRequest(ctx, http.MethodPatch, fmt.Sprintf("/setting/lan/profiles/%s", profileID), profile)
 	if err != nil {
 		return nil, err
+	}
+	if isEmptyResult(resp.Result) {
+		return c.GetPortProfile(ctx, profileID)
 	}
 	var updated PortProfile
 	if err := json.Unmarshal(resp.Result, &updated); err != nil {
@@ -983,10 +1004,15 @@ func (c *Client) GetSiteSettings(ctx context.Context) (*SiteSettings, error) {
 }
 
 // UpdateSiteSettings patches site settings with the provided partial object.
+// The Omada API may return an empty result body on success (e.g., when
+// deviceAccount is omitted). In that case, we do a follow-up GET.
 func (c *Client) UpdateSiteSettings(ctx context.Context, settings *SiteSettings) (*SiteSettings, error) {
 	resp, err := c.doSiteRequest(ctx, http.MethodPatch, "/setting", settings)
 	if err != nil {
 		return nil, err
+	}
+	if isEmptyResult(resp.Result) {
+		return c.GetSiteSettings(ctx)
 	}
 	var updated SiteSettings
 	if err := json.Unmarshal(resp.Result, &updated); err != nil {
@@ -1197,6 +1223,9 @@ func (c *Client) UpdateAPConfig(ctx context.Context, mac string, config map[stri
 	if err != nil {
 		return nil, err
 	}
+	if isEmptyResult(resp.Result) {
+		return c.GetAPConfig(ctx, mac)
+	}
 	var updated APConfig
 	if err := json.Unmarshal(resp.Result, &updated); err != nil {
 		return nil, fmt.Errorf("decoding updated AP config: %w", err)
@@ -1336,6 +1365,9 @@ func (c *Client) UpdateSwitchConfig(ctx context.Context, mac string, config map[
 	resp, err := c.doSiteRequest(ctx, http.MethodPatch, fmt.Sprintf("/switches/%s", mac), config)
 	if err != nil {
 		return nil, err
+	}
+	if isEmptyResult(resp.Result) {
+		return c.GetSwitchConfig(ctx, mac)
 	}
 	var updated SwitchConfig
 	if err := json.Unmarshal(resp.Result, &updated); err != nil {
