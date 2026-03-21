@@ -20,8 +20,6 @@ type Client struct {
 	username   string
 	password   string
 	omadacID   string
-	siteID     string
-	siteName   string
 	token      string
 	httpClient *http.Client
 	mu         sync.Mutex
@@ -276,7 +274,7 @@ type DhcpL2RelaySettings struct {
 }
 
 // NewClient creates a new Omada API client.
-func NewClient(baseURL, username, password, site string, skipTLSVerify bool) (*Client, error) {
+func NewClient(baseURL, username, password string, skipTLSVerify bool) (*Client, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating cookie jar: %w", err)
@@ -301,7 +299,6 @@ func NewClient(baseURL, username, password, site string, skipTLSVerify bool) (*C
 		baseURL:    baseURL,
 		username:   username,
 		password:   password,
-		siteName:   site,
 		httpClient: httpClient,
 	}
 
@@ -313,13 +310,6 @@ func NewClient(baseURL, username, password, site string, skipTLSVerify bool) (*C
 	// Step 2: Login
 	if err := c.login(context.Background()); err != nil {
 		return nil, fmt.Errorf("logging in: %w", err)
-	}
-
-	// Step 3: Resolve site ID (optional — deferred until a site-scoped call is made)
-	if site != "" {
-		if err := c.resolveSiteID(context.Background(), site); err != nil {
-			return nil, fmt.Errorf("resolving site: %w", err)
-		}
 	}
 
 	return c, nil
@@ -385,21 +375,6 @@ func (c *Client) login(ctx context.Context) error {
 	return nil
 }
 
-// resolveSiteID looks up the site ID by name.
-func (c *Client) resolveSiteID(ctx context.Context, siteName string) error {
-	sites, err := c.ListSites(ctx)
-	if err != nil {
-		return err
-	}
-	for _, s := range sites {
-		if strings.EqualFold(s.Name, siteName) || s.ID == siteName {
-			c.siteID = s.ID
-			return nil
-		}
-	}
-	return fmt.Errorf("site %q not found", siteName)
-}
-
 // ensureAuth re-authenticates if the session has expired.
 func (c *Client) ensureAuth(ctx context.Context) error {
 	c.mu.Lock()
@@ -422,46 +397,25 @@ func (c *Client) reAuth(ctx context.Context) error {
 	return c.login(ctx)
 }
 
-// ensureSiteID lazily resolves the site ID if not already set.
-func (c *Client) ensureSiteID(ctx context.Context) error {
-	if c.siteID != "" {
-		return nil
-	}
-	if c.siteName == "" {
-		return fmt.Errorf("site is required for this operation — set 'site' in the provider configuration")
-	}
-	return c.resolveSiteID(ctx, c.siteName)
-}
-
 // globalURL builds a URL for non-site-scoped endpoints.
 func (c *Client) globalURL(path string) string {
 	return fmt.Sprintf("%s/%s/api/v2%s?token=%s", c.baseURL, c.omadacID, path, c.token)
 }
 
-// siteURL builds a URL for site-scoped endpoints. Caller must ensure siteID is set.
-func (c *Client) siteURL(path string) string {
-	if c.siteID == "" {
-		// This should never happen if ensureSiteID is called properly
-		panic("siteURL called without siteID — call ensureSiteID first")
-	}
-	return fmt.Sprintf("%s/%s/api/v2/sites/%s%s?token=%s", c.baseURL, c.omadacID, c.siteID, path, c.token)
+// siteURL builds a URL for site-scoped endpoints.
+func (c *Client) siteURL(siteID, path string) string {
+	return fmt.Sprintf("%s/%s/api/v2/sites/%s%s?token=%s", c.baseURL, c.omadacID, siteID, path, c.token)
 }
 
-// doSiteRequest is a convenience wrapper that ensures siteID is resolved before making a site-scoped request.
-func (c *Client) doSiteRequest(ctx context.Context, method, path string, body interface{}) (*APIResponse, error) {
-	if err := c.ensureSiteID(ctx); err != nil {
-		return nil, err
-	}
-	url := c.siteURL(path)
+// doSiteRequest performs a site-scoped API request.
+func (c *Client) doSiteRequest(ctx context.Context, siteID, method, path string, body interface{}) (*APIResponse, error) {
+	url := c.siteURL(siteID, path)
 	return c.doRequest(ctx, method, url, body)
 }
 
 // doSiteRequestWithParams is like doSiteRequest but appends extra query params.
-func (c *Client) doSiteRequestWithParams(ctx context.Context, method, path, extraParams string, body interface{}) (*APIResponse, error) {
-	if err := c.ensureSiteID(ctx); err != nil {
-		return nil, err
-	}
-	url := c.siteURL(path) + extraParams
+func (c *Client) doSiteRequestWithParams(ctx context.Context, siteID, method, path, extraParams string, body interface{}) (*APIResponse, error) {
+	url := c.siteURL(siteID, path) + extraParams
 	return c.doRequest(ctx, method, url, body)
 }
 
@@ -545,14 +499,24 @@ func isEmptyResult(result json.RawMessage) bool {
 	return trimmed == "" || trimmed == "null" || trimmed == "{}" || trimmed == "\"\"" || trimmed == "[]"
 }
 
-// GetSiteID returns the resolved site ID.
-func (c *Client) GetSiteID() string {
-	return c.siteID
-}
-
 // GetOmadacID returns the controller ID.
 func (c *Client) GetOmadacID() string {
 	return c.omadacID
+}
+
+// ResolveSiteID looks up a site ID by name. Returns the ID if the input
+// already matches a site ID directly.
+func (c *Client) ResolveSiteID(ctx context.Context, nameOrID string) (string, error) {
+	sites, err := c.ListSites(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, s := range sites {
+		if strings.EqualFold(s.Name, nameOrID) || s.ID == nameOrID {
+			return s.ID, nil
+		}
+	}
+	return "", fmt.Errorf("site %q not found", nameOrID)
 }
 
 // --- Sites ---
@@ -616,9 +580,9 @@ func (c *Client) DeleteSite(ctx context.Context, siteID string) error {
 
 // --- Networks ---
 
-// ListNetworks returns all LAN networks for the current site.
-func (c *Client) ListNetworks(ctx context.Context) ([]Network, error) {
-	resp, err := c.doSiteRequestWithParams(ctx, http.MethodGet, "/setting/lan/networks", "&currentPage=1&currentPageSize=100", nil)
+// ListNetworks returns all LAN networks for the given site.
+func (c *Client) ListNetworks(ctx context.Context, siteID string) ([]Network, error) {
+	resp, err := c.doSiteRequestWithParams(ctx, siteID, http.MethodGet, "/setting/lan/networks", "&currentPage=1&currentPageSize=100", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -630,8 +594,8 @@ func (c *Client) ListNetworks(ctx context.Context) ([]Network, error) {
 }
 
 // GetNetwork returns a network by ID.
-func (c *Client) GetNetwork(ctx context.Context, networkID string) (*Network, error) {
-	networks, err := c.ListNetworks(ctx)
+func (c *Client) GetNetwork(ctx context.Context, siteID, networkID string) (*Network, error) {
+	networks, err := c.ListNetworks(ctx, siteID)
 	if err != nil {
 		return nil, err
 	}
@@ -645,9 +609,9 @@ func (c *Client) GetNetwork(ctx context.Context, networkID string) (*Network, er
 
 // CreateNetwork creates a new LAN network, or adopts an existing one with the
 // same name (the controller auto-creates a "Default" network on site creation).
-func (c *Client) CreateNetwork(ctx context.Context, network *Network) (*Network, error) {
+func (c *Client) CreateNetwork(ctx context.Context, siteID string, network *Network) (*Network, error) {
 	// Check for an existing network with the same name (adopt pattern).
-	existing, err := c.ListNetworks(ctx)
+	existing, err := c.ListNetworks(ctx, siteID)
 	if err != nil {
 		return nil, fmt.Errorf("listing networks for adopt check: %w", err)
 	}
@@ -658,7 +622,7 @@ func (c *Client) CreateNetwork(ctx context.Context, network *Network) (*Network,
 		}
 	}
 
-	resp, err := c.doSiteRequest(ctx, http.MethodPost, "/setting/lan/networks", network)
+	resp, err := c.doSiteRequest(ctx, siteID, http.MethodPost, "/setting/lan/networks", network)
 	if err != nil {
 		return nil, err
 	}
@@ -668,7 +632,7 @@ func (c *Client) CreateNetwork(ctx context.Context, network *Network) (*Network,
 	var networkID string
 	if err := json.Unmarshal(resp.Result, &networkID); err == nil && networkID != "" {
 		// Got a string ID — do a follow-up GET to retrieve the full object.
-		return c.GetNetwork(ctx, networkID)
+		return c.GetNetwork(ctx, siteID, networkID)
 	}
 
 	// Otherwise try to unmarshal as a Network object.
@@ -683,13 +647,13 @@ func (c *Client) CreateNetwork(ctx context.Context, network *Network) (*Network,
 }
 
 // UpdateNetwork updates an existing LAN network.
-func (c *Client) UpdateNetwork(ctx context.Context, networkID string, network *Network) (*Network, error) {
-	resp, err := c.doSiteRequest(ctx, http.MethodPatch, fmt.Sprintf("/setting/lan/networks/%s", networkID), network)
+func (c *Client) UpdateNetwork(ctx context.Context, siteID, networkID string, network *Network) (*Network, error) {
+	resp, err := c.doSiteRequest(ctx, siteID, http.MethodPatch, fmt.Sprintf("/setting/lan/networks/%s", networkID), network)
 	if err != nil {
 		return nil, err
 	}
 	if isEmptyResult(resp.Result) {
-		return c.GetNetwork(ctx, networkID)
+		return c.GetNetwork(ctx, siteID, networkID)
 	}
 	var updated Network
 	if err := json.Unmarshal(resp.Result, &updated); err != nil {
@@ -699,16 +663,16 @@ func (c *Client) UpdateNetwork(ctx context.Context, networkID string, network *N
 }
 
 // DeleteNetwork deletes a LAN network.
-func (c *Client) DeleteNetwork(ctx context.Context, networkID string) error {
-	_, err := c.doSiteRequest(ctx, http.MethodDelete, fmt.Sprintf("/setting/lan/networks/%s", networkID), nil)
+func (c *Client) DeleteNetwork(ctx context.Context, siteID, networkID string) error {
+	_, err := c.doSiteRequest(ctx, siteID, http.MethodDelete, fmt.Sprintf("/setting/lan/networks/%s", networkID), nil)
 	return err
 }
 
 // --- Wireless Networks (SSIDs) ---
 
 // ListWlanGroups returns all WLAN groups.
-func (c *Client) ListWlanGroups(ctx context.Context) ([]WlanGroup, error) {
-	resp, err := c.doSiteRequestWithParams(ctx, http.MethodGet, "/setting/wlans", "&currentPage=1&currentPageSize=100", nil)
+func (c *Client) ListWlanGroups(ctx context.Context, siteID string) ([]WlanGroup, error) {
+	resp, err := c.doSiteRequestWithParams(ctx, siteID, http.MethodGet, "/setting/wlans", "&currentPage=1&currentPageSize=100", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -720,8 +684,8 @@ func (c *Client) ListWlanGroups(ctx context.Context) ([]WlanGroup, error) {
 }
 
 // GetDefaultWlanGroupID returns the first WLAN group's ID (usually "Default").
-func (c *Client) GetDefaultWlanGroupID(ctx context.Context) (string, error) {
-	groups, err := c.ListWlanGroups(ctx)
+func (c *Client) GetDefaultWlanGroupID(ctx context.Context, siteID string) (string, error) {
+	groups, err := c.ListWlanGroups(ctx, siteID)
 	if err != nil {
 		return "", err
 	}
@@ -732,8 +696,8 @@ func (c *Client) GetDefaultWlanGroupID(ctx context.Context) (string, error) {
 }
 
 // GetWlanGroup returns a WLAN group by ID (fetches from list since individual GET is not supported).
-func (c *Client) GetWlanGroup(ctx context.Context, wlanGroupID string) (*WlanGroup, error) {
-	groups, err := c.ListWlanGroups(ctx)
+func (c *Client) GetWlanGroup(ctx context.Context, siteID, wlanGroupID string) (*WlanGroup, error) {
+	groups, err := c.ListWlanGroups(ctx, siteID)
 	if err != nil {
 		return nil, err
 	}
@@ -746,12 +710,12 @@ func (c *Client) GetWlanGroup(ctx context.Context, wlanGroupID string) (*WlanGro
 }
 
 // CreateWlanGroup creates a new WLAN group.
-func (c *Client) CreateWlanGroup(ctx context.Context, name string, clone bool) (string, error) {
+func (c *Client) CreateWlanGroup(ctx context.Context, siteID, name string, clone bool) (string, error) {
 	req := &WlanGroupCreateRequest{
 		Name:  name,
 		Clone: clone,
 	}
-	resp, err := c.doSiteRequest(ctx, http.MethodPost, "/setting/wlans", req)
+	resp, err := c.doSiteRequest(ctx, siteID, http.MethodPost, "/setting/wlans", req)
 	if err != nil {
 		return "", err
 	}
@@ -763,21 +727,21 @@ func (c *Client) CreateWlanGroup(ctx context.Context, name string, clone bool) (
 }
 
 // UpdateWlanGroup renames a WLAN group.
-func (c *Client) UpdateWlanGroup(ctx context.Context, wlanGroupID, name string) error {
+func (c *Client) UpdateWlanGroup(ctx context.Context, siteID, wlanGroupID, name string) error {
 	req := &WlanGroupUpdateRequest{Name: name}
-	_, err := c.doSiteRequest(ctx, http.MethodPatch, fmt.Sprintf("/setting/wlans/%s", wlanGroupID), req)
+	_, err := c.doSiteRequest(ctx, siteID, http.MethodPatch, fmt.Sprintf("/setting/wlans/%s", wlanGroupID), req)
 	return err
 }
 
 // DeleteWlanGroup deletes a WLAN group.
-func (c *Client) DeleteWlanGroup(ctx context.Context, wlanGroupID string) error {
-	_, err := c.doSiteRequest(ctx, http.MethodDelete, fmt.Sprintf("/setting/wlans/%s", wlanGroupID), nil)
+func (c *Client) DeleteWlanGroup(ctx context.Context, siteID, wlanGroupID string) error {
+	_, err := c.doSiteRequest(ctx, siteID, http.MethodDelete, fmt.Sprintf("/setting/wlans/%s", wlanGroupID), nil)
 	return err
 }
 
 // ListWirelessNetworks returns all SSIDs in a WLAN group.
-func (c *Client) ListWirelessNetworks(ctx context.Context, wlanGroupID string) ([]WirelessNetwork, error) {
-	resp, err := c.doSiteRequestWithParams(ctx, http.MethodGet, fmt.Sprintf("/setting/wlans/%s/ssids", wlanGroupID), "&currentPage=1&currentPageSize=100", nil)
+func (c *Client) ListWirelessNetworks(ctx context.Context, siteID, wlanGroupID string) ([]WirelessNetwork, error) {
+	resp, err := c.doSiteRequestWithParams(ctx, siteID, http.MethodGet, fmt.Sprintf("/setting/wlans/%s/ssids", wlanGroupID), "&currentPage=1&currentPageSize=100", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -789,8 +753,8 @@ func (c *Client) ListWirelessNetworks(ctx context.Context, wlanGroupID string) (
 }
 
 // GetWirelessNetwork returns a specific SSID.
-func (c *Client) GetWirelessNetwork(ctx context.Context, wlanGroupID, ssidID string) (*WirelessNetwork, error) {
-	ssids, err := c.ListWirelessNetworks(ctx, wlanGroupID)
+func (c *Client) GetWirelessNetwork(ctx context.Context, siteID, wlanGroupID, ssidID string) (*WirelessNetwork, error) {
+	ssids, err := c.ListWirelessNetworks(ctx, siteID, wlanGroupID)
 	if err != nil {
 		return nil, err
 	}
@@ -803,8 +767,8 @@ func (c *Client) GetWirelessNetwork(ctx context.Context, wlanGroupID, ssidID str
 }
 
 // GetWirelessNetworkRaw returns the raw JSON for a specific SSID (needed for PATCH).
-func (c *Client) GetWirelessNetworkRaw(ctx context.Context, wlanGroupID, ssidID string) (map[string]interface{}, error) {
-	resp, err := c.doSiteRequestWithParams(ctx, http.MethodGet, fmt.Sprintf("/setting/wlans/%s/ssids", wlanGroupID), "&currentPage=1&currentPageSize=100", nil)
+func (c *Client) GetWirelessNetworkRaw(ctx context.Context, siteID, wlanGroupID, ssidID string) (map[string]interface{}, error) {
+	resp, err := c.doSiteRequestWithParams(ctx, siteID, http.MethodGet, fmt.Sprintf("/setting/wlans/%s/ssids", wlanGroupID), "&currentPage=1&currentPageSize=100", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -828,8 +792,8 @@ func (c *Client) GetWirelessNetworkRaw(ctx context.Context, wlanGroupID, ssidID 
 }
 
 // CreateWirelessNetwork creates a new SSID.
-func (c *Client) CreateWirelessNetwork(ctx context.Context, wlanGroupID string, ssid *WirelessNetwork) (*WirelessNetwork, error) {
-	resp, err := c.doSiteRequest(ctx, http.MethodPost, fmt.Sprintf("/setting/wlans/%s/ssids", wlanGroupID), ssid)
+func (c *Client) CreateWirelessNetwork(ctx context.Context, siteID, wlanGroupID string, ssid *WirelessNetwork) (*WirelessNetwork, error) {
+	resp, err := c.doSiteRequest(ctx, siteID, http.MethodPost, fmt.Sprintf("/setting/wlans/%s/ssids", wlanGroupID), ssid)
 	if err != nil {
 		return nil, err
 	}
@@ -839,7 +803,7 @@ func (c *Client) CreateWirelessNetwork(ctx context.Context, wlanGroupID string, 
 		SsidID string `json:"ssidId"`
 	}
 	if err := json.Unmarshal(resp.Result, &createResult); err == nil && createResult.SsidID != "" {
-		return c.GetWirelessNetwork(ctx, wlanGroupID, createResult.SsidID)
+		return c.GetWirelessNetwork(ctx, siteID, wlanGroupID, createResult.SsidID)
 	}
 
 	// Fallback: try to unmarshal as a full WirelessNetwork.
@@ -851,19 +815,19 @@ func (c *Client) CreateWirelessNetwork(ctx context.Context, wlanGroupID string, 
 }
 
 // UpdateWirelessNetwork updates an existing SSID (requires full object).
-func (c *Client) UpdateWirelessNetwork(ctx context.Context, wlanGroupID, ssidID string, ssid map[string]interface{}) (*WirelessNetwork, error) {
+func (c *Client) UpdateWirelessNetwork(ctx context.Context, siteID, wlanGroupID, ssidID string, ssid map[string]interface{}) (*WirelessNetwork, error) {
 	// Remove read-only fields that must not be in PATCH
 	readOnlyFields := []string{"id", "idInt", "index", "site", "resource", "vlanEnable", "portalEnable", "accessEnable"}
 	for _, f := range readOnlyFields {
 		delete(ssid, f)
 	}
 
-	resp, err := c.doSiteRequest(ctx, http.MethodPatch, fmt.Sprintf("/setting/wlans/%s/ssids/%s", wlanGroupID, ssidID), ssid)
+	resp, err := c.doSiteRequest(ctx, siteID, http.MethodPatch, fmt.Sprintf("/setting/wlans/%s/ssids/%s", wlanGroupID, ssidID), ssid)
 	if err != nil {
 		return nil, err
 	}
 	if isEmptyResult(resp.Result) {
-		return c.GetWirelessNetwork(ctx, wlanGroupID, ssidID)
+		return c.GetWirelessNetwork(ctx, siteID, wlanGroupID, ssidID)
 	}
 	var updated WirelessNetwork
 	if err := json.Unmarshal(resp.Result, &updated); err != nil {
@@ -873,16 +837,16 @@ func (c *Client) UpdateWirelessNetwork(ctx context.Context, wlanGroupID, ssidID 
 }
 
 // DeleteWirelessNetwork deletes an SSID.
-func (c *Client) DeleteWirelessNetwork(ctx context.Context, wlanGroupID, ssidID string) error {
-	_, err := c.doSiteRequest(ctx, http.MethodDelete, fmt.Sprintf("/setting/wlans/%s/ssids/%s", wlanGroupID, ssidID), nil)
+func (c *Client) DeleteWirelessNetwork(ctx context.Context, siteID, wlanGroupID, ssidID string) error {
+	_, err := c.doSiteRequest(ctx, siteID, http.MethodDelete, fmt.Sprintf("/setting/wlans/%s/ssids/%s", wlanGroupID, ssidID), nil)
 	return err
 }
 
 // --- Port Profiles ---
 
 // ListPortProfiles returns all LAN port profiles.
-func (c *Client) ListPortProfiles(ctx context.Context) ([]PortProfile, error) {
-	resp, err := c.doSiteRequestWithParams(ctx, http.MethodGet, "/setting/lan/profiles", "&currentPage=1&currentPageSize=100", nil)
+func (c *Client) ListPortProfiles(ctx context.Context, siteID string) ([]PortProfile, error) {
+	resp, err := c.doSiteRequestWithParams(ctx, siteID, http.MethodGet, "/setting/lan/profiles", "&currentPage=1&currentPageSize=100", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -894,8 +858,8 @@ func (c *Client) ListPortProfiles(ctx context.Context) ([]PortProfile, error) {
 }
 
 // GetPortProfile returns a port profile by ID.
-func (c *Client) GetPortProfile(ctx context.Context, profileID string) (*PortProfile, error) {
-	profiles, err := c.ListPortProfiles(ctx)
+func (c *Client) GetPortProfile(ctx context.Context, siteID, profileID string) (*PortProfile, error) {
+	profiles, err := c.ListPortProfiles(ctx, siteID)
 	if err != nil {
 		return nil, err
 	}
@@ -908,14 +872,14 @@ func (c *Client) GetPortProfile(ctx context.Context, profileID string) (*PortPro
 }
 
 // CreatePortProfile creates a new port profile, or adopts an existing one with the same name.
-func (c *Client) CreatePortProfile(ctx context.Context, profile *PortProfile) (*PortProfile, error) {
+func (c *Client) CreatePortProfile(ctx context.Context, siteID string, profile *PortProfile) (*PortProfile, error) {
 	// Check if a profile with this name already exists (adopt pattern).
-	existing, err := c.ListPortProfiles(ctx)
+	existing, err := c.ListPortProfiles(ctx, siteID)
 	if err == nil {
 		for _, p := range existing {
 			if p.Name == profile.Name {
 				// Adopt the existing profile — update it to match desired state.
-				updated, err := c.UpdatePortProfile(ctx, p.ID, profile)
+				updated, err := c.UpdatePortProfile(ctx, siteID, p.ID, profile)
 				if err != nil {
 					return nil, fmt.Errorf("adopting existing port profile %q (%s): %w", p.Name, p.ID, err)
 				}
@@ -924,7 +888,7 @@ func (c *Client) CreatePortProfile(ctx context.Context, profile *PortProfile) (*
 		}
 	}
 
-	resp, err := c.doSiteRequest(ctx, http.MethodPost, "/setting/lan/profiles", profile)
+	resp, err := c.doSiteRequest(ctx, siteID, http.MethodPost, "/setting/lan/profiles", profile)
 	if err != nil {
 		return nil, err
 	}
@@ -936,13 +900,13 @@ func (c *Client) CreatePortProfile(ctx context.Context, profile *PortProfile) (*
 }
 
 // UpdatePortProfile updates a port profile.
-func (c *Client) UpdatePortProfile(ctx context.Context, profileID string, profile *PortProfile) (*PortProfile, error) {
-	resp, err := c.doSiteRequest(ctx, http.MethodPatch, fmt.Sprintf("/setting/lan/profiles/%s", profileID), profile)
+func (c *Client) UpdatePortProfile(ctx context.Context, siteID, profileID string, profile *PortProfile) (*PortProfile, error) {
+	resp, err := c.doSiteRequest(ctx, siteID, http.MethodPatch, fmt.Sprintf("/setting/lan/profiles/%s", profileID), profile)
 	if err != nil {
 		return nil, err
 	}
 	if isEmptyResult(resp.Result) {
-		return c.GetPortProfile(ctx, profileID)
+		return c.GetPortProfile(ctx, siteID, profileID)
 	}
 	var updated PortProfile
 	if err := json.Unmarshal(resp.Result, &updated); err != nil {
@@ -952,8 +916,8 @@ func (c *Client) UpdatePortProfile(ctx context.Context, profileID string, profil
 }
 
 // DeletePortProfile deletes a port profile.
-func (c *Client) DeletePortProfile(ctx context.Context, profileID string) error {
-	_, err := c.doSiteRequest(ctx, http.MethodDelete, fmt.Sprintf("/setting/lan/profiles/%s", profileID), nil)
+func (c *Client) DeletePortProfile(ctx context.Context, siteID, profileID string) error {
+	_, err := c.doSiteRequest(ctx, siteID, http.MethodDelete, fmt.Sprintf("/setting/lan/profiles/%s", profileID), nil)
 	return err
 }
 
@@ -1095,9 +1059,9 @@ type RememberDevice struct {
 	Enable bool `json:"enable"`
 }
 
-// GetSiteSettings returns the full site settings for the current site.
-func (c *Client) GetSiteSettings(ctx context.Context) (*SiteSettings, error) {
-	resp, err := c.doSiteRequest(ctx, http.MethodGet, "/setting", nil)
+// GetSiteSettings returns the full site settings for the given site.
+func (c *Client) GetSiteSettings(ctx context.Context, siteID string) (*SiteSettings, error) {
+	resp, err := c.doSiteRequest(ctx, siteID, http.MethodGet, "/setting", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1111,13 +1075,13 @@ func (c *Client) GetSiteSettings(ctx context.Context) (*SiteSettings, error) {
 // UpdateSiteSettings patches site settings with the provided partial object.
 // The Omada API may return an empty result body on success (e.g., when
 // deviceAccount is omitted). In that case, we do a follow-up GET.
-func (c *Client) UpdateSiteSettings(ctx context.Context, settings *SiteSettings) (*SiteSettings, error) {
-	resp, err := c.doSiteRequest(ctx, http.MethodPatch, "/setting", settings)
+func (c *Client) UpdateSiteSettings(ctx context.Context, siteID string, settings *SiteSettings) (*SiteSettings, error) {
+	resp, err := c.doSiteRequest(ctx, siteID, http.MethodPatch, "/setting", settings)
 	if err != nil {
 		return nil, err
 	}
 	if isEmptyResult(resp.Result) {
-		return c.GetSiteSettings(ctx)
+		return c.GetSiteSettings(ctx, siteID)
 	}
 	var updated SiteSettings
 	if err := json.Unmarshal(resp.Result, &updated); err != nil {
@@ -1268,10 +1232,10 @@ type APConfig struct {
 	LanPortSettings json.RawMessage `json:"lanPortSettings,omitempty"`
 }
 
-// ListDevices returns all devices in the current site.
+// ListDevices returns all devices in the given site.
 // The devices endpoint returns a plain JSON array (not paginated).
-func (c *Client) ListDevices(ctx context.Context) ([]Device, error) {
-	resp, err := c.doSiteRequest(ctx, http.MethodGet, "/devices", nil)
+func (c *Client) ListDevices(ctx context.Context, siteID string) ([]Device, error) {
+	resp, err := c.doSiteRequest(ctx, siteID, http.MethodGet, "/devices", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1283,8 +1247,8 @@ func (c *Client) ListDevices(ctx context.Context) ([]Device, error) {
 }
 
 // GetAPConfig returns the full configuration for an AP by MAC address.
-func (c *Client) GetAPConfig(ctx context.Context, mac string) (*APConfig, error) {
-	resp, err := c.doSiteRequest(ctx, http.MethodGet, fmt.Sprintf("/eaps/%s", mac), nil)
+func (c *Client) GetAPConfig(ctx context.Context, siteID, mac string) (*APConfig, error) {
+	resp, err := c.doSiteRequest(ctx, siteID, http.MethodGet, fmt.Sprintf("/eaps/%s", mac), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1296,8 +1260,8 @@ func (c *Client) GetAPConfig(ctx context.Context, mac string) (*APConfig, error)
 }
 
 // GetAPConfigRaw returns the raw JSON for an AP (needed for PATCH).
-func (c *Client) GetAPConfigRaw(ctx context.Context, mac string) (map[string]interface{}, error) {
-	resp, err := c.doSiteRequest(ctx, http.MethodGet, fmt.Sprintf("/eaps/%s", mac), nil)
+func (c *Client) GetAPConfigRaw(ctx context.Context, siteID, mac string) (map[string]interface{}, error) {
+	resp, err := c.doSiteRequest(ctx, siteID, http.MethodGet, fmt.Sprintf("/eaps/%s", mac), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1310,7 +1274,7 @@ func (c *Client) GetAPConfigRaw(ctx context.Context, mac string) (map[string]int
 
 // UpdateAPConfig updates an AP configuration via PATCH.
 // Similar to SSIDs, this likely requires the full object minus read-only fields.
-func (c *Client) UpdateAPConfig(ctx context.Context, mac string, config map[string]interface{}) (*APConfig, error) {
+func (c *Client) UpdateAPConfig(ctx context.Context, siteID, mac string, config map[string]interface{}) (*APConfig, error) {
 	// Remove read-only / status fields that must not be in PATCH
 	readOnlyFields := []string{
 		"type", "mac", "model", "modelVersion", "ip", "status", "statusCategory",
@@ -1324,12 +1288,12 @@ func (c *Client) UpdateAPConfig(ctx context.Context, mac string, config map[stri
 		delete(config, f)
 	}
 
-	resp, err := c.doSiteRequest(ctx, http.MethodPatch, fmt.Sprintf("/eaps/%s", mac), config)
+	resp, err := c.doSiteRequest(ctx, siteID, http.MethodPatch, fmt.Sprintf("/eaps/%s", mac), config)
 	if err != nil {
 		return nil, err
 	}
 	if isEmptyResult(resp.Result) {
-		return c.GetAPConfig(ctx, mac)
+		return c.GetAPConfig(ctx, siteID, mac)
 	}
 	var updated APConfig
 	if err := json.Unmarshal(resp.Result, &updated); err != nil {
@@ -1405,8 +1369,8 @@ type SwitchConfig struct {
 }
 
 // GetSwitchConfig returns the full configuration for a switch by MAC address.
-func (c *Client) GetSwitchConfig(ctx context.Context, mac string) (*SwitchConfig, error) {
-	resp, err := c.doSiteRequest(ctx, http.MethodGet, fmt.Sprintf("/switches/%s", mac), nil)
+func (c *Client) GetSwitchConfig(ctx context.Context, siteID, mac string) (*SwitchConfig, error) {
+	resp, err := c.doSiteRequest(ctx, siteID, http.MethodGet, fmt.Sprintf("/switches/%s", mac), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1418,8 +1382,8 @@ func (c *Client) GetSwitchConfig(ctx context.Context, mac string) (*SwitchConfig
 }
 
 // GetSwitchConfigRaw returns the raw JSON for a switch (needed for PATCH).
-func (c *Client) GetSwitchConfigRaw(ctx context.Context, mac string) (map[string]interface{}, error) {
-	resp, err := c.doSiteRequest(ctx, http.MethodGet, fmt.Sprintf("/switches/%s", mac), nil)
+func (c *Client) GetSwitchConfigRaw(ctx context.Context, siteID, mac string) (map[string]interface{}, error) {
+	resp, err := c.doSiteRequest(ctx, siteID, http.MethodGet, fmt.Sprintf("/switches/%s", mac), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1431,7 +1395,7 @@ func (c *Client) GetSwitchConfigRaw(ctx context.Context, mac string) (map[string
 }
 
 // UpdateSwitchConfig updates a switch configuration via PATCH.
-func (c *Client) UpdateSwitchConfig(ctx context.Context, mac string, config map[string]interface{}) (*SwitchConfig, error) {
+func (c *Client) UpdateSwitchConfig(ctx context.Context, siteID, mac string, config map[string]interface{}) (*SwitchConfig, error) {
 	// Remove read-only / status fields that must not be in PATCH
 	readOnlyFields := []string{
 		"type", "mac", "model", "modelVersion", "compoundModel", "showModel",
@@ -1467,12 +1431,12 @@ func (c *Client) UpdateSwitchConfig(ctx context.Context, mac string, config map[
 		}
 	}
 
-	resp, err := c.doSiteRequest(ctx, http.MethodPatch, fmt.Sprintf("/switches/%s", mac), config)
+	resp, err := c.doSiteRequest(ctx, siteID, http.MethodPatch, fmt.Sprintf("/switches/%s", mac), config)
 	if err != nil {
 		return nil, err
 	}
 	if isEmptyResult(resp.Result) {
-		return c.GetSwitchConfig(ctx, mac)
+		return c.GetSwitchConfig(ctx, siteID, mac)
 	}
 	var updated SwitchConfig
 	if err := json.Unmarshal(resp.Result, &updated); err != nil {

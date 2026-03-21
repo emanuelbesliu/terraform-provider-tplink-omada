@@ -18,6 +18,7 @@ type NetworksDataSource struct {
 }
 
 type NetworksDataSourceModel struct {
+	SiteID   types.String       `tfsdk:"site_id"`
 	Networks []NetworkDataModel `tfsdk:"networks"`
 }
 
@@ -40,37 +41,20 @@ func (d *NetworksDataSource) Metadata(_ context.Context, req datasource.Metadata
 
 func (d *NetworksDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Lists all LAN networks on the Omada Controller for the configured site.",
+		Description: "Lists all LAN networks on the Omada Controller for the given site.",
 		Attributes: map[string]schema.Attribute{
+			"site_id": siteIDDataSourceSchema(),
 			"networks": schema.ListNestedAttribute{
 				Description: "List of networks.",
 				Computed:    true,
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
-						"id": schema.StringAttribute{
-							Description: "The network ID.",
-							Computed:    true,
-						},
-						"name": schema.StringAttribute{
-							Description: "The network name.",
-							Computed:    true,
-						},
-						"purpose": schema.StringAttribute{
-							Description: "The network purpose ('interface' or 'vlan').",
-							Computed:    true,
-						},
-						"vlan_id": schema.Int64Attribute{
-							Description: "The VLAN ID.",
-							Computed:    true,
-						},
-						"gateway_subnet": schema.StringAttribute{
-							Description: "The gateway IP and subnet in CIDR notation (e.g., '192.168.0.1/24').",
-							Computed:    true,
-						},
-						"dhcp_enabled": schema.BoolAttribute{
-							Description: "Whether DHCP is enabled.",
-							Computed:    true,
-						},
+						"id":             schema.StringAttribute{Description: "The network ID.", Computed: true},
+						"name":           schema.StringAttribute{Description: "The network name.", Computed: true},
+						"purpose":        schema.StringAttribute{Description: "The network purpose ('interface' or 'vlan').", Computed: true},
+						"vlan_id":        schema.Int64Attribute{Description: "The VLAN ID.", Computed: true},
+						"gateway_subnet": schema.StringAttribute{Description: "The gateway IP and subnet in CIDR notation.", Computed: true},
+						"dhcp_enabled":   schema.BoolAttribute{Description: "Whether DHCP is enabled.", Computed: true},
 					},
 				},
 			},
@@ -94,13 +78,23 @@ func (d *NetworksDataSource) Configure(_ context.Context, req datasource.Configu
 }
 
 func (d *NetworksDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
-	networks, err := d.client.ListNetworks(ctx)
+	var config NetworksDataSourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	siteID := config.SiteID.ValueString()
+
+	networks, err := d.client.ListNetworks(ctx, siteID)
 	if err != nil {
 		resp.Diagnostics.AddError("Error listing networks", err.Error())
 		return
 	}
 
-	var state NetworksDataSourceModel
+	state := NetworksDataSourceModel{
+		SiteID: config.SiteID,
+	}
 	for _, n := range networks {
 		dm := NetworkDataModel{
 			ID:            types.StringValue(n.ID),
@@ -129,6 +123,7 @@ type WirelessNetworksDataSource struct {
 }
 
 type WirelessNetworksDataSourceModel struct {
+	SiteID           types.String               `tfsdk:"site_id"`
 	WlanGroupID      types.String               `tfsdk:"wlan_group_id"`
 	WirelessNetworks []WirelessNetworkDataModel `tfsdk:"wireless_networks"`
 }
@@ -156,6 +151,7 @@ func (d *WirelessNetworksDataSource) Schema(_ context.Context, _ datasource.Sche
 	resp.Schema = schema.Schema{
 		Description: "Lists all wireless networks (SSIDs) for a WLAN group on the Omada Controller.",
 		Attributes: map[string]schema.Attribute{
+			"site_id": siteIDDataSourceSchema(),
 			"wlan_group_id": schema.StringAttribute{
 				Description: "The WLAN group ID to list SSIDs from. If not set, the default WLAN group is used.",
 				Optional:    true,
@@ -166,38 +162,14 @@ func (d *WirelessNetworksDataSource) Schema(_ context.Context, _ datasource.Sche
 				Computed:    true,
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
-						"id": schema.StringAttribute{
-							Description: "The SSID ID.",
-							Computed:    true,
-						},
-						"name": schema.StringAttribute{
-							Description: "The SSID name.",
-							Computed:    true,
-						},
-						"band": schema.Int64Attribute{
-							Description: "Radio band: 1=2.4GHz, 2=5GHz, 3=both.",
-							Computed:    true,
-						},
-						"security": schema.Int64Attribute{
-							Description: "Security mode: 0=Open, 3=WPA2/WPA3.",
-							Computed:    true,
-						},
-						"broadcast": schema.BoolAttribute{
-							Description: "Whether the SSID is broadcast (visible).",
-							Computed:    true,
-						},
-						"vlan_id": schema.Int64Attribute{
-							Description: "The VLAN ID assigned to this SSID.",
-							Computed:    true,
-						},
-						"enable_11r": schema.BoolAttribute{
-							Description: "Whether 802.11r Fast Roaming is enabled.",
-							Computed:    true,
-						},
-						"pmf_mode": schema.Int64Attribute{
-							Description: "Protected Management Frames mode.",
-							Computed:    true,
-						},
+						"id":         schema.StringAttribute{Description: "The SSID ID.", Computed: true},
+						"name":       schema.StringAttribute{Description: "The SSID name.", Computed: true},
+						"band":       schema.Int64Attribute{Description: "Radio band: 1=2.4GHz, 2=5GHz, 3=both.", Computed: true},
+						"security":   schema.Int64Attribute{Description: "Security mode: 0=Open, 3=WPA2/WPA3.", Computed: true},
+						"broadcast":  schema.BoolAttribute{Description: "Whether the SSID is broadcast (visible).", Computed: true},
+						"vlan_id":    schema.Int64Attribute{Description: "The VLAN ID assigned to this SSID.", Computed: true},
+						"enable_11r": schema.BoolAttribute{Description: "Whether 802.11r Fast Roaming is enabled.", Computed: true},
+						"pmf_mode":   schema.Int64Attribute{Description: "Protected Management Frames mode.", Computed: true},
 					},
 				},
 			},
@@ -227,9 +199,11 @@ func (d *WirelessNetworksDataSource) Read(ctx context.Context, req datasource.Re
 		return
 	}
 
+	siteID := config.SiteID.ValueString()
+
 	wlanGroupID := config.WlanGroupID.ValueString()
 	if wlanGroupID == "" {
-		gid, err := d.client.GetDefaultWlanGroupID(ctx)
+		gid, err := d.client.GetDefaultWlanGroupID(ctx, siteID)
 		if err != nil {
 			resp.Diagnostics.AddError("Error getting default WLAN group", err.Error())
 			return
@@ -237,13 +211,14 @@ func (d *WirelessNetworksDataSource) Read(ctx context.Context, req datasource.Re
 		wlanGroupID = gid
 	}
 
-	ssids, err := d.client.ListWirelessNetworks(ctx, wlanGroupID)
+	ssids, err := d.client.ListWirelessNetworks(ctx, siteID, wlanGroupID)
 	if err != nil {
 		resp.Diagnostics.AddError("Error listing wireless networks", err.Error())
 		return
 	}
 
 	state := WirelessNetworksDataSourceModel{
+		SiteID:      config.SiteID,
 		WlanGroupID: types.StringValue(wlanGroupID),
 	}
 	for _, s := range ssids {
@@ -279,6 +254,7 @@ type PortProfilesDataSource struct {
 }
 
 type PortProfilesDataSourceModel struct {
+	SiteID       types.String           `tfsdk:"site_id"`
 	PortProfiles []PortProfileDataModel `tfsdk:"port_profiles"`
 }
 
@@ -302,42 +278,21 @@ func (d *PortProfilesDataSource) Metadata(_ context.Context, req datasource.Meta
 
 func (d *PortProfilesDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Lists all switch port profiles on the Omada Controller for the configured site.",
+		Description: "Lists all switch port profiles on the Omada Controller for the given site.",
 		Attributes: map[string]schema.Attribute{
+			"site_id": siteIDDataSourceSchema(),
 			"port_profiles": schema.ListNestedAttribute{
 				Description: "List of port profiles.",
 				Computed:    true,
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
-						"id": schema.StringAttribute{
-							Description: "The port profile ID.",
-							Computed:    true,
-						},
-						"name": schema.StringAttribute{
-							Description: "The port profile name.",
-							Computed:    true,
-						},
-						"native_network_id": schema.StringAttribute{
-							Description: "The native (untagged) network ID.",
-							Computed:    true,
-						},
-						"tag_network_ids": schema.ListAttribute{
-							Description: "Tagged network IDs.",
-							Computed:    true,
-							ElementType: types.StringType,
-						},
-						"poe": schema.Int64Attribute{
-							Description: "PoE setting: 0=disabled, 1=enabled, 2=use profile default.",
-							Computed:    true,
-						},
-						"dot1x": schema.Int64Attribute{
-							Description: "802.1X: 0=port-based, 1=mac-based, 2=disabled.",
-							Computed:    true,
-						},
-						"type": schema.Int64Attribute{
-							Description: "Profile type: 0=All, 1=Disable, 2=Custom.",
-							Computed:    true,
-						},
+						"id":                schema.StringAttribute{Description: "The port profile ID.", Computed: true},
+						"name":              schema.StringAttribute{Description: "The port profile name.", Computed: true},
+						"native_network_id": schema.StringAttribute{Description: "The native (untagged) network ID.", Computed: true},
+						"tag_network_ids":   schema.ListAttribute{Description: "Tagged network IDs.", Computed: true, ElementType: types.StringType},
+						"poe":               schema.Int64Attribute{Description: "PoE setting.", Computed: true},
+						"dot1x":             schema.Int64Attribute{Description: "802.1X setting.", Computed: true},
+						"type":              schema.Int64Attribute{Description: "Profile type.", Computed: true},
 					},
 				},
 			},
@@ -361,13 +316,23 @@ func (d *PortProfilesDataSource) Configure(_ context.Context, req datasource.Con
 }
 
 func (d *PortProfilesDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
-	profiles, err := d.client.ListPortProfiles(ctx)
+	var config PortProfilesDataSourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	siteID := config.SiteID.ValueString()
+
+	profiles, err := d.client.ListPortProfiles(ctx, siteID)
 	if err != nil {
 		resp.Diagnostics.AddError("Error listing port profiles", err.Error())
 		return
 	}
 
-	var state PortProfilesDataSourceModel
+	state := PortProfilesDataSourceModel{
+		SiteID: config.SiteID,
+	}
 	for _, p := range profiles {
 		tagIDs, diags := types.ListValueFrom(ctx, types.StringType, p.TagNetworkIDs)
 		resp.Diagnostics.Append(diags...)
@@ -422,14 +387,8 @@ func (d *SitesDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, 
 				Computed:    true,
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
-						"id": schema.StringAttribute{
-							Description: "The site ID.",
-							Computed:    true,
-						},
-						"name": schema.StringAttribute{
-							Description: "The site name.",
-							Computed:    true,
-						},
+						"id":   schema.StringAttribute{Description: "The site ID.", Computed: true},
+						"name": schema.StringAttribute{Description: "The site name.", Computed: true},
 					},
 				},
 			},
@@ -474,14 +433,14 @@ func (d *SitesDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 
 var _ datasource.DataSource = &SiteSettingsDataSource{}
 
-// SiteSettingsDataSource reads the settings for the current site.
+// SiteSettingsDataSource reads the settings for a site.
 type SiteSettingsDataSource struct {
 	client *client.Client
 }
 
 // SiteSettingsDataSourceModel maps the data source schema.
 type SiteSettingsDataSourceModel struct {
-	ID types.String `tfsdk:"id"`
+	SiteID types.String `tfsdk:"site_id"`
 
 	// Site identity
 	SiteName types.String `tfsdk:"site_name"`
@@ -543,9 +502,9 @@ func (d *SiteSettingsDataSource) Metadata(_ context.Context, req datasource.Meta
 
 func (d *SiteSettingsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Reads the current settings for the configured Omada site.",
+		Description: "Reads the current settings for an Omada site.",
 		Attributes: map[string]schema.Attribute{
-			"id":                            schema.StringAttribute{Description: "The site ID.", Computed: true},
+			"site_id":                       siteIDDataSourceSchema(),
 			"site_name":                     schema.StringAttribute{Description: "The site display name.", Computed: true},
 			"region":                        schema.StringAttribute{Description: "The site region.", Computed: true},
 			"timezone":                      schema.StringAttribute{Description: "The site timezone.", Computed: true},
@@ -594,15 +553,23 @@ func (d *SiteSettingsDataSource) Configure(_ context.Context, req datasource.Con
 	d.client = c
 }
 
-func (d *SiteSettingsDataSource) Read(ctx context.Context, _ datasource.ReadRequest, resp *datasource.ReadResponse) {
-	settings, err := d.client.GetSiteSettings(ctx)
+func (d *SiteSettingsDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var config SiteSettingsDataSourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	siteID := config.SiteID.ValueString()
+
+	settings, err := d.client.GetSiteSettings(ctx, siteID)
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading site settings", err.Error())
 		return
 	}
 
 	state := SiteSettingsDataSourceModel{
-		ID: types.StringValue(d.client.GetSiteID()),
+		SiteID: config.SiteID,
 	}
 
 	if settings.Site != nil {
@@ -672,13 +639,14 @@ func (d *SiteSettingsDataSource) Read(ctx context.Context, _ datasource.ReadRequ
 
 var _ datasource.DataSource = &DevicesDataSource{}
 
-// DevicesDataSource lists all devices in the current site.
+// DevicesDataSource lists all devices in a site.
 type DevicesDataSource struct {
 	client *client.Client
 }
 
 // DevicesDataSourceModel maps the data source schema.
 type DevicesDataSourceModel struct {
+	SiteID  types.String      `tfsdk:"site_id"`
 	Devices []DeviceDataModel `tfsdk:"devices"`
 }
 
@@ -707,57 +675,25 @@ func (d *DevicesDataSource) Metadata(_ context.Context, req datasource.MetadataR
 
 func (d *DevicesDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Lists all devices (APs, switches, gateways) in the configured site.",
+		Description: "Lists all devices (APs, switches, gateways) in a site.",
 		Attributes: map[string]schema.Attribute{
+			"site_id": siteIDDataSourceSchema(),
 			"devices": schema.ListNestedAttribute{
 				Description: "List of devices.",
 				Computed:    true,
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
-						"type": schema.StringAttribute{
-							Description: "Device type: 'ap', 'switch', or 'gateway'.",
-							Computed:    true,
-						},
-						"mac": schema.StringAttribute{
-							Description: "The device MAC address.",
-							Computed:    true,
-						},
-						"name": schema.StringAttribute{
-							Description: "The device display name.",
-							Computed:    true,
-						},
-						"model": schema.StringAttribute{
-							Description: "The device model (e.g., 'EAP655-Wall').",
-							Computed:    true,
-						},
-						"firmware_version": schema.StringAttribute{
-							Description: "The current firmware version.",
-							Computed:    true,
-						},
-						"ip": schema.StringAttribute{
-							Description: "The device IP address.",
-							Computed:    true,
-						},
-						"status": schema.Int64Attribute{
-							Description: "Device status code (14=connected, 0=disconnected).",
-							Computed:    true,
-						},
-						"status_category": schema.Int64Attribute{
-							Description: "Device status category.",
-							Computed:    true,
-						},
-						"client_num": schema.Int64Attribute{
-							Description: "Number of connected clients.",
-							Computed:    true,
-						},
-						"cpu_util": schema.Float64Attribute{
-							Description: "CPU utilization percentage.",
-							Computed:    true,
-						},
-						"mem_util": schema.Float64Attribute{
-							Description: "Memory utilization percentage.",
-							Computed:    true,
-						},
+						"type":             schema.StringAttribute{Description: "Device type: 'ap', 'switch', or 'gateway'.", Computed: true},
+						"mac":              schema.StringAttribute{Description: "The device MAC address.", Computed: true},
+						"name":             schema.StringAttribute{Description: "The device display name.", Computed: true},
+						"model":            schema.StringAttribute{Description: "The device model.", Computed: true},
+						"firmware_version": schema.StringAttribute{Description: "The current firmware version.", Computed: true},
+						"ip":               schema.StringAttribute{Description: "The device IP address.", Computed: true},
+						"status":           schema.Int64Attribute{Description: "Device status code.", Computed: true},
+						"status_category":  schema.Int64Attribute{Description: "Device status category.", Computed: true},
+						"client_num":       schema.Int64Attribute{Description: "Number of connected clients.", Computed: true},
+						"cpu_util":         schema.Float64Attribute{Description: "CPU utilization percentage.", Computed: true},
+						"mem_util":         schema.Float64Attribute{Description: "Memory utilization percentage.", Computed: true},
 					},
 				},
 			},
@@ -780,14 +716,24 @@ func (d *DevicesDataSource) Configure(_ context.Context, req datasource.Configur
 	d.client = c
 }
 
-func (d *DevicesDataSource) Read(ctx context.Context, _ datasource.ReadRequest, resp *datasource.ReadResponse) {
-	devices, err := d.client.ListDevices(ctx)
+func (d *DevicesDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var config DevicesDataSourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	siteID := config.SiteID.ValueString()
+
+	devices, err := d.client.ListDevices(ctx, siteID)
 	if err != nil {
 		resp.Diagnostics.AddError("Error listing devices", err.Error())
 		return
 	}
 
-	var state DevicesDataSourceModel
+	state := DevicesDataSourceModel{
+		SiteID: config.SiteID,
+	}
 	for _, dev := range devices {
 		state.Devices = append(state.Devices, DeviceDataModel{
 			Type:            types.StringValue(dev.Type),

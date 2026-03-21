@@ -25,7 +25,8 @@ type DeviceAPResource struct {
 // DeviceAPResourceModel maps the resource schema to Go types.
 type DeviceAPResourceModel struct {
 	// Identity — MAC is the ID (immutable)
-	MAC types.String `tfsdk:"mac"`
+	MAC    types.String `tfsdk:"mac"`
+	SiteID types.String `tfsdk:"site_id"`
 
 	// Configurable fields
 	Name   types.String `tfsdk:"name"`
@@ -102,6 +103,7 @@ func (r *DeviceAPResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
+			"site_id": siteIDResourceSchema(),
 
 			// Configurable
 			"name": schema.StringAttribute{
@@ -311,12 +313,13 @@ func (r *DeviceAPResource) Create(ctx context.Context, req resource.CreateReques
 	}
 
 	mac := plan.MAC.ValueString()
+	siteID := plan.SiteID.ValueString()
 
 	// Check if we need to update any fields beyond just reading
 	needsUpdate := false
 
 	// Fetch current raw config for PATCH
-	rawConfig, err := r.client.GetAPConfigRaw(ctx, mac)
+	rawConfig, err := r.client.GetAPConfigRaw(ctx, siteID, mac)
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading AP config", err.Error())
 		return
@@ -394,7 +397,7 @@ func (r *DeviceAPResource) Create(ctx context.Context, req resource.CreateReques
 	applyRSSISettingsToRaw(rawConfig, "rssiSetting5g", plan.RSSI5gEnable, plan.RSSI5gThreshold, &needsUpdate)
 
 	if needsUpdate {
-		_, err = r.client.UpdateAPConfig(ctx, mac, rawConfig)
+		_, err = r.client.UpdateAPConfig(ctx, siteID, mac, rawConfig)
 		if err != nil {
 			resp.Diagnostics.AddError("Error updating AP config", err.Error())
 			return
@@ -402,7 +405,7 @@ func (r *DeviceAPResource) Create(ctx context.Context, req resource.CreateReques
 	}
 
 	// Read back fresh state
-	apConfig, err := r.client.GetAPConfig(ctx, mac)
+	apConfig, err := r.client.GetAPConfig(ctx, siteID, mac)
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading AP config after create", err.Error())
 		return
@@ -419,7 +422,7 @@ func (r *DeviceAPResource) Read(ctx context.Context, req resource.ReadRequest, r
 		return
 	}
 
-	apConfig, err := r.client.GetAPConfig(ctx, state.MAC.ValueString())
+	apConfig, err := r.client.GetAPConfig(ctx, state.SiteID.ValueString(), state.MAC.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading AP config", err.Error())
 		return
@@ -437,9 +440,10 @@ func (r *DeviceAPResource) Update(ctx context.Context, req resource.UpdateReques
 	}
 
 	mac := plan.MAC.ValueString()
+	siteID := plan.SiteID.ValueString()
 
 	// Fetch full raw config for PATCH
-	rawConfig, err := r.client.GetAPConfigRaw(ctx, mac)
+	rawConfig, err := r.client.GetAPConfigRaw(ctx, siteID, mac)
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading AP config for update", err.Error())
 		return
@@ -506,14 +510,14 @@ func (r *DeviceAPResource) Update(ctx context.Context, req resource.UpdateReques
 	applyRSSISettingsToRaw(rawConfig, "rssiSetting2g", plan.RSSI2gEnable, plan.RSSI2gThreshold, &dummy)
 	applyRSSISettingsToRaw(rawConfig, "rssiSetting5g", plan.RSSI5gEnable, plan.RSSI5gThreshold, &dummy)
 
-	_, err = r.client.UpdateAPConfig(ctx, mac, rawConfig)
+	_, err = r.client.UpdateAPConfig(ctx, siteID, mac, rawConfig)
 	if err != nil {
 		resp.Diagnostics.AddError("Error updating AP config", err.Error())
 		return
 	}
 
 	// Read back fresh state
-	apConfig, err := r.client.GetAPConfig(ctx, mac)
+	apConfig, err := r.client.GetAPConfig(ctx, siteID, mac)
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading AP config after update", err.Error())
 		return
@@ -530,9 +534,16 @@ func (r *DeviceAPResource) Delete(_ context.Context, _ resource.DeleteRequest, _
 }
 
 func (r *DeviceAPResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	mac := req.ID
+	siteID, mac, ok := parseImportID(req.ID)
+	if !ok {
+		resp.Diagnostics.AddError(
+			"Invalid import ID",
+			"Import ID must be in the format 'siteID/mac'.",
+		)
+		return
+	}
 
-	apConfig, err := r.client.GetAPConfig(ctx, mac)
+	apConfig, err := r.client.GetAPConfig(ctx, siteID, mac)
 	if err != nil {
 		resp.Diagnostics.AddError("Error importing AP config",
 			fmt.Sprintf("Could not read AP with MAC %q: %s", mac, err.Error()))
@@ -541,6 +552,7 @@ func (r *DeviceAPResource) ImportState(ctx context.Context, req resource.ImportS
 
 	var state DeviceAPResourceModel
 	state.MAC = types.StringValue(mac)
+	state.SiteID = types.StringValue(siteID)
 	apConfigToState(apConfig, &state)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }

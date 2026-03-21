@@ -42,7 +42,8 @@ type SwitchPortModel struct {
 // DeviceSwitchResourceModel maps the resource schema to Go types.
 type DeviceSwitchResourceModel struct {
 	// Identity
-	MAC types.String `tfsdk:"mac"`
+	MAC    types.String `tfsdk:"mac"`
+	SiteID types.String `tfsdk:"site_id"`
 
 	// Configurable top-level fields
 	Name                  types.String `tfsdk:"name"`
@@ -172,6 +173,7 @@ func (r *DeviceSwitchResource) Schema(_ context.Context, _ resource.SchemaReques
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
+			"site_id": siteIDResourceSchema(),
 
 			// Configurable
 			"name": schema.StringAttribute{
@@ -337,9 +339,10 @@ func (r *DeviceSwitchResource) Create(ctx context.Context, req resource.CreateRe
 	}
 
 	mac := plan.MAC.ValueString()
+	siteID := plan.SiteID.ValueString()
 
 	// Fetch current raw config
-	rawConfig, err := r.client.GetSwitchConfigRaw(ctx, mac)
+	rawConfig, err := r.client.GetSwitchConfigRaw(ctx, siteID, mac)
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading switch config", err.Error())
 		return
@@ -349,7 +352,7 @@ func (r *DeviceSwitchResource) Create(ctx context.Context, req resource.CreateRe
 	applySwitchPlanToRaw(rawConfig, &plan, &needsUpdate)
 
 	if needsUpdate {
-		_, err = r.client.UpdateSwitchConfig(ctx, mac, rawConfig)
+		_, err = r.client.UpdateSwitchConfig(ctx, siteID, mac, rawConfig)
 		if err != nil {
 			resp.Diagnostics.AddError("Error updating switch config", err.Error())
 			return
@@ -357,7 +360,7 @@ func (r *DeviceSwitchResource) Create(ctx context.Context, req resource.CreateRe
 	}
 
 	// Read back fresh state
-	swConfig, err := r.client.GetSwitchConfig(ctx, mac)
+	swConfig, err := r.client.GetSwitchConfig(ctx, siteID, mac)
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading switch config after create", err.Error())
 		return
@@ -374,7 +377,7 @@ func (r *DeviceSwitchResource) Read(ctx context.Context, req resource.ReadReques
 		return
 	}
 
-	swConfig, err := r.client.GetSwitchConfig(ctx, state.MAC.ValueString())
+	swConfig, err := r.client.GetSwitchConfig(ctx, state.SiteID.ValueString(), state.MAC.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading switch config", err.Error())
 		return
@@ -392,8 +395,9 @@ func (r *DeviceSwitchResource) Update(ctx context.Context, req resource.UpdateRe
 	}
 
 	mac := plan.MAC.ValueString()
+	siteID := plan.SiteID.ValueString()
 
-	rawConfig, err := r.client.GetSwitchConfigRaw(ctx, mac)
+	rawConfig, err := r.client.GetSwitchConfigRaw(ctx, siteID, mac)
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading switch config for update", err.Error())
 		return
@@ -402,13 +406,13 @@ func (r *DeviceSwitchResource) Update(ctx context.Context, req resource.UpdateRe
 	dummy := true
 	applySwitchPlanToRaw(rawConfig, &plan, &dummy)
 
-	_, err = r.client.UpdateSwitchConfig(ctx, mac, rawConfig)
+	_, err = r.client.UpdateSwitchConfig(ctx, siteID, mac, rawConfig)
 	if err != nil {
 		resp.Diagnostics.AddError("Error updating switch config", err.Error())
 		return
 	}
 
-	swConfig, err := r.client.GetSwitchConfig(ctx, mac)
+	swConfig, err := r.client.GetSwitchConfig(ctx, siteID, mac)
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading switch config after update", err.Error())
 		return
@@ -424,9 +428,16 @@ func (r *DeviceSwitchResource) Delete(_ context.Context, _ resource.DeleteReques
 }
 
 func (r *DeviceSwitchResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	mac := req.ID
+	siteID, mac, ok := parseImportID(req.ID)
+	if !ok {
+		resp.Diagnostics.AddError(
+			"Invalid import ID",
+			"Import ID must be in the format 'siteID/mac'.",
+		)
+		return
+	}
 
-	swConfig, err := r.client.GetSwitchConfig(ctx, mac)
+	swConfig, err := r.client.GetSwitchConfig(ctx, siteID, mac)
 	if err != nil {
 		resp.Diagnostics.AddError("Error importing switch config",
 			fmt.Sprintf("Could not read switch with MAC %q: %s", mac, err.Error()))
@@ -435,6 +446,7 @@ func (r *DeviceSwitchResource) ImportState(ctx context.Context, req resource.Imp
 
 	var state DeviceSwitchResourceModel
 	state.MAC = types.StringValue(mac)
+	state.SiteID = types.StringValue(siteID)
 	switchConfigToState(swConfig, &state)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }

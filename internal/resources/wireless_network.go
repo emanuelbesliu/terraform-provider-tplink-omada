@@ -3,7 +3,6 @@ package resources
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -26,6 +25,7 @@ type WirelessNetworkResource struct {
 // WirelessNetworkResourceModel maps the resource schema to Go types.
 type WirelessNetworkResourceModel struct {
 	ID          types.String `tfsdk:"id"`
+	SiteID      types.String `tfsdk:"site_id"`
 	WlanGroupID types.String `tfsdk:"wlan_group_id"`
 	Name        types.String `tfsdk:"name"`
 	Band        types.Int64  `tfsdk:"band"`
@@ -56,6 +56,7 @@ func (r *WirelessNetworkResource) Schema(_ context.Context, _ resource.SchemaReq
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"site_id": siteIDResourceSchema(),
 			"wlan_group_id": schema.StringAttribute{
 				Description: "The WLAN group ID. If not set, the default WLAN group is used.",
 				Optional:    true,
@@ -133,10 +134,12 @@ func (r *WirelessNetworkResource) Create(ctx context.Context, req resource.Creat
 		return
 	}
 
+	siteID := plan.SiteID.ValueString()
+
 	// Resolve WLAN group ID
 	wlanGroupID := plan.WlanGroupID.ValueString()
 	if wlanGroupID == "" {
-		gid, err := r.client.GetDefaultWlanGroupID(ctx)
+		gid, err := r.client.GetDefaultWlanGroupID(ctx, siteID)
 		if err != nil {
 			resp.Diagnostics.AddError("Error getting default WLAN group", err.Error())
 			return
@@ -179,7 +182,7 @@ func (r *WirelessNetworkResource) Create(ctx context.Context, req resource.Creat
 		}
 		// Look up the network ID for this VLAN to populate lanNetworkId
 		// (required by the Omada API for SSID creation).
-		networks, err := r.client.ListNetworks(ctx)
+		networks, err := r.client.ListNetworks(ctx, siteID)
 		if err == nil {
 			for _, n := range networks {
 				if n.Vlan == vlanID {
@@ -199,7 +202,7 @@ func (r *WirelessNetworkResource) Create(ctx context.Context, req resource.Creat
 		ssid.VlanSetting = &client.VlanSetting{Mode: 0}
 	}
 
-	created, err := r.client.CreateWirelessNetwork(ctx, wlanGroupID, ssid)
+	created, err := r.client.CreateWirelessNetwork(ctx, siteID, wlanGroupID, ssid)
 	if err != nil {
 		resp.Diagnostics.AddError("Error creating wireless network", err.Error())
 		return
@@ -223,8 +226,10 @@ func (r *WirelessNetworkResource) Read(ctx context.Context, req resource.ReadReq
 		return
 	}
 
+	siteID := state.SiteID.ValueString()
 	wlanGroupID := state.WlanGroupID.ValueString()
-	ssid, err := r.client.GetWirelessNetwork(ctx, wlanGroupID, state.ID.ValueString())
+
+	ssid, err := r.client.GetWirelessNetwork(ctx, siteID, wlanGroupID, state.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading wireless network", err.Error())
 		return
@@ -265,11 +270,12 @@ func (r *WirelessNetworkResource) Update(ctx context.Context, req resource.Updat
 		return
 	}
 
+	siteID := state.SiteID.ValueString()
 	wlanGroupID := state.WlanGroupID.ValueString()
 	ssidID := state.ID.ValueString()
 
 	// Fetch the full raw SSID object (PATCH requires the complete object)
-	rawSSID, err := r.client.GetWirelessNetworkRaw(ctx, wlanGroupID, ssidID)
+	rawSSID, err := r.client.GetWirelessNetworkRaw(ctx, siteID, wlanGroupID, ssidID)
 	if err != nil {
 		resp.Diagnostics.AddError("Error fetching wireless network for update", err.Error())
 		return
@@ -300,13 +306,14 @@ func (r *WirelessNetworkResource) Update(ctx context.Context, req resource.Updat
 		}
 	}
 
-	updated, err := r.client.UpdateWirelessNetwork(ctx, wlanGroupID, ssidID, rawSSID)
+	updated, err := r.client.UpdateWirelessNetwork(ctx, siteID, wlanGroupID, ssidID, rawSSID)
 	if err != nil {
 		resp.Diagnostics.AddError("Error updating wireless network", err.Error())
 		return
 	}
 
 	plan.ID = state.ID
+	plan.SiteID = state.SiteID
 	plan.WlanGroupID = state.WlanGroupID
 	plan.Band = types.Int64Value(int64(updated.Band))
 	plan.Security = types.Int64Value(int64(updated.Security))
@@ -324,7 +331,7 @@ func (r *WirelessNetworkResource) Delete(ctx context.Context, req resource.Delet
 		return
 	}
 
-	err := r.client.DeleteWirelessNetwork(ctx, state.WlanGroupID.ValueString(), state.ID.ValueString())
+	err := r.client.DeleteWirelessNetwork(ctx, state.SiteID.ValueString(), state.WlanGroupID.ValueString(), state.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Error deleting wireless network", err.Error())
 		return
@@ -332,20 +339,17 @@ func (r *WirelessNetworkResource) Delete(ctx context.Context, req resource.Delet
 }
 
 func (r *WirelessNetworkResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	// Import ID format: "wlanGroupID/ssidID"
-	parts := strings.SplitN(req.ID, "/", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+	// Import ID format: "siteID/wlanGroupID/ssidID"
+	siteID, wlanGroupID, ssidID, ok := parseImportID3(req.ID)
+	if !ok {
 		resp.Diagnostics.AddError(
 			"Invalid import ID",
-			"Import ID must be in the format 'wlanGroupID/ssidID'. "+
-				"Example: terraform import omada_wireless_network.example 696a40fd49039e1d13a9c412/696a4c3549039e1d13a9c61b",
+			"Import ID must be in the format 'siteID/wlanGroupID/ssidID'.",
 		)
 		return
 	}
-	wlanGroupID := parts[0]
-	ssidID := parts[1]
 
-	ssid, err := r.client.GetWirelessNetwork(ctx, wlanGroupID, ssidID)
+	ssid, err := r.client.GetWirelessNetwork(ctx, siteID, wlanGroupID, ssidID)
 	if err != nil {
 		resp.Diagnostics.AddError("Error importing wireless network", err.Error())
 		return
@@ -353,6 +357,7 @@ func (r *WirelessNetworkResource) ImportState(ctx context.Context, req resource.
 
 	state := WirelessNetworkResourceModel{
 		ID:          types.StringValue(ssid.ID),
+		SiteID:      types.StringValue(siteID),
 		WlanGroupID: types.StringValue(wlanGroupID),
 		Name:        types.StringValue(ssid.Name),
 		Band:        types.Int64Value(int64(ssid.Band)),

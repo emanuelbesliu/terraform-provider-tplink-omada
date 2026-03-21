@@ -26,7 +26,8 @@ type SiteSettingsResource struct {
 
 // SiteSettingsResourceModel maps the Terraform schema to Go types.
 type SiteSettingsResourceModel struct {
-	ID types.String `tfsdk:"id"`
+	ID     types.String `tfsdk:"id"`
+	SiteID types.String `tfsdk:"site_id"`
 
 	// Site identity
 	SiteName types.String `tfsdk:"site_name"`
@@ -126,12 +127,13 @@ func (r *SiteSettingsResource) Schema(_ context.Context, _ resource.SchemaReques
 			"Terraform state without changing settings on the controller.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
-				Description: "The site ID (used as the resource identifier).",
+				Description: "The resource identifier (same as site_id).",
 				Computed:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"site_id": siteIDResourceSchema(),
 
 			// --- Site identity ---
 			"site_name": schema.StringAttribute{
@@ -487,6 +489,8 @@ func (r *SiteSettingsResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 
+	siteID := plan.SiteID.ValueString()
+
 	// Build the settings object from the plan
 	settings := planToSiteSettings(&plan)
 
@@ -496,14 +500,13 @@ func (r *SiteSettingsResource) Create(ctx context.Context, req resource.CreateRe
 	}
 
 	// PATCH the settings onto the existing site settings
-	updated, err := r.client.UpdateSiteSettings(ctx, settings)
+	updated, err := r.client.UpdateSiteSettings(ctx, siteID, settings)
 	if err != nil {
 		resp.Diagnostics.AddError("Error creating site settings", err.Error())
 		return
 	}
 
-	// Use the site ID as the resource ID
-	plan.ID = types.StringValue(r.client.GetSiteID())
+	plan.ID = types.StringValue(siteID)
 	siteSettingsToState(updated, &plan)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
@@ -516,13 +519,15 @@ func (r *SiteSettingsResource) Read(ctx context.Context, req resource.ReadReques
 		return
 	}
 
-	settings, err := r.client.GetSiteSettings(ctx)
+	siteID := state.SiteID.ValueString()
+
+	settings, err := r.client.GetSiteSettings(ctx, siteID)
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading site settings", err.Error())
 		return
 	}
 
-	state.ID = types.StringValue(r.client.GetSiteID())
+	state.ID = types.StringValue(siteID)
 	siteSettingsToState(settings, &state)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -550,6 +555,8 @@ func (r *SiteSettingsResource) Update(ctx context.Context, req resource.UpdateRe
 		return
 	}
 
+	siteID := state.SiteID.ValueString()
+
 	settings := planToSiteSettings(&plan)
 
 	// Only include deviceAccount in the PATCH if the user explicitly configured both
@@ -559,13 +566,14 @@ func (r *SiteSettingsResource) Update(ctx context.Context, req resource.UpdateRe
 		settings.DeviceAccount = nil
 	}
 
-	updated, err := r.client.UpdateSiteSettings(ctx, settings)
+	updated, err := r.client.UpdateSiteSettings(ctx, siteID, settings)
 	if err != nil {
 		resp.Diagnostics.AddError("Error updating site settings", err.Error())
 		return
 	}
 
 	plan.ID = state.ID
+	plan.SiteID = state.SiteID
 	siteSettingsToState(updated, &plan)
 
 	// Preserve the device account password from state — the API returns "***".
@@ -582,15 +590,23 @@ func (r *SiteSettingsResource) Delete(_ context.Context, _ resource.DeleteReques
 	// No API call needed.
 }
 
-func (r *SiteSettingsResource) ImportState(ctx context.Context, _ resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	settings, err := r.client.GetSiteSettings(ctx)
+func (r *SiteSettingsResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	// Import ID is the site ID.
+	siteID := req.ID
+	if siteID == "" {
+		resp.Diagnostics.AddError("Invalid import ID", "Import ID must be the site ID.")
+		return
+	}
+
+	settings, err := r.client.GetSiteSettings(ctx, siteID)
 	if err != nil {
 		resp.Diagnostics.AddError("Error importing site settings", err.Error())
 		return
 	}
 
 	var state SiteSettingsResourceModel
-	state.ID = types.StringValue(r.client.GetSiteID())
+	state.ID = types.StringValue(siteID)
+	state.SiteID = types.StringValue(siteID)
 	siteSettingsToState(settings, &state)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
