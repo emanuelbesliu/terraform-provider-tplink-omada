@@ -41,8 +41,8 @@ type SwitchPortModel struct {
 
 // DeviceSwitchResourceModel maps the resource schema to Go types.
 type DeviceSwitchResourceModel struct {
-	// Identity
-	MAC    types.String `tfsdk:"mac"`
+	// Identity — ID is the MAC address, set via import
+	ID     types.String `tfsdk:"id"`
 	SiteID types.String `tfsdk:"site_id"`
 
 	// Configurable top-level fields
@@ -162,18 +162,24 @@ var switchPortSchema = schema.NestedAttributeObject{
 func (r *DeviceSwitchResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description: "Manages the configuration of an Omada managed switch. " +
-			"Switches cannot be created or deleted via the API — this resource manages the configuration " +
-			"of an already-adopted switch. Import by MAC address. Delete removes from Terraform state only.",
+			"Switches must be adopted through the controller UI before they can be managed. " +
+			"Use 'terraform import omada_device_switch.<name> <siteID>/<mac>' to bring an adopted switch into state.",
 		Attributes: map[string]schema.Attribute{
-			// Identity
-			"mac": schema.StringAttribute{
-				Description: "The switch MAC address (unique identifier). Used for import.",
-				Required:    true,
+			// Identity — set by import, not user config
+			"id": schema.StringAttribute{
+				Description: "The switch MAC address (set by import).",
+				Computed:    true,
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
+					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
-			"site_id": siteIDResourceSchema(),
+			"site_id": schema.StringAttribute{
+				Description: "The site ID this device belongs to. Set by import, not configurable.",
+				Computed:    true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
 
 			// Configurable
 			"name": schema.StringAttribute{
@@ -331,43 +337,14 @@ func (r *DeviceSwitchResource) Configure(_ context.Context, req resource.Configu
 	r.client = c
 }
 
-func (r *DeviceSwitchResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var plan DeviceSwitchResourceModel
-	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	mac := plan.MAC.ValueString()
-	siteID := plan.SiteID.ValueString()
-
-	// Fetch current raw config
-	rawConfig, err := r.client.GetSwitchConfigRaw(ctx, siteID, mac)
-	if err != nil {
-		resp.Diagnostics.AddError("Error reading switch config", err.Error())
-		return
-	}
-
-	needsUpdate := false
-	applySwitchPlanToRaw(rawConfig, &plan, &needsUpdate)
-
-	if needsUpdate {
-		_, err = r.client.UpdateSwitchConfig(ctx, siteID, mac, rawConfig)
-		if err != nil {
-			resp.Diagnostics.AddError("Error updating switch config", err.Error())
-			return
-		}
-	}
-
-	// Read back fresh state
-	swConfig, err := r.client.GetSwitchConfig(ctx, siteID, mac)
-	if err != nil {
-		resp.Diagnostics.AddError("Error reading switch config after create", err.Error())
-		return
-	}
-
-	switchConfigToState(swConfig, &plan)
-	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+// Create always fails — switches must be adopted through the controller UI
+// and imported into Terraform state.
+func (r *DeviceSwitchResource) Create(_ context.Context, _ resource.CreateRequest, resp *resource.CreateResponse) {
+	resp.Diagnostics.AddError(
+		"Cannot create switch device",
+		"Switches must be adopted through the Omada controller UI, then imported into Terraform:\n\n"+
+			"  terraform import omada_device_switch.<name> <siteID>/<mac>",
+	)
 }
 
 func (r *DeviceSwitchResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -377,7 +354,7 @@ func (r *DeviceSwitchResource) Read(ctx context.Context, req resource.ReadReques
 		return
 	}
 
-	swConfig, err := r.client.GetSwitchConfig(ctx, state.SiteID.ValueString(), state.MAC.ValueString())
+	swConfig, err := r.client.GetSwitchConfig(ctx, state.SiteID.ValueString(), state.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading switch config", err.Error())
 		return
@@ -394,8 +371,14 @@ func (r *DeviceSwitchResource) Update(ctx context.Context, req resource.UpdateRe
 		return
 	}
 
-	mac := plan.MAC.ValueString()
-	siteID := plan.SiteID.ValueString()
+	var state DeviceSwitchResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	mac := state.ID.ValueString()
+	siteID := state.SiteID.ValueString()
 
 	rawConfig, err := r.client.GetSwitchConfigRaw(ctx, siteID, mac)
 	if err != nil {
@@ -419,6 +402,7 @@ func (r *DeviceSwitchResource) Update(ctx context.Context, req resource.UpdateRe
 	}
 
 	switchConfigToState(swConfig, &plan)
+	plan.SiteID = state.SiteID
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -445,7 +429,6 @@ func (r *DeviceSwitchResource) ImportState(ctx context.Context, req resource.Imp
 	}
 
 	var state DeviceSwitchResourceModel
-	state.MAC = types.StringValue(mac)
 	state.SiteID = types.StringValue(siteID)
 	switchConfigToState(swConfig, &state)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -453,7 +436,7 @@ func (r *DeviceSwitchResource) ImportState(ctx context.Context, req resource.Imp
 
 // switchConfigToState maps a SwitchConfig from the API to the Terraform state model.
 func switchConfigToState(cfg *client.SwitchConfig, state *DeviceSwitchResourceModel) {
-	state.MAC = types.StringValue(cfg.MAC)
+	state.ID = types.StringValue(cfg.MAC)
 	state.Name = types.StringValue(cfg.Name)
 	state.LEDSetting = types.Int64Value(int64(cfg.LEDSetting))
 	state.MVlanNetworkID = types.StringValue(cfg.MVlanNetworkID)

@@ -24,8 +24,8 @@ type DeviceAPResource struct {
 
 // DeviceAPResourceModel maps the resource schema to Go types.
 type DeviceAPResourceModel struct {
-	// Identity — MAC is the ID (immutable)
-	MAC    types.String `tfsdk:"mac"`
+	// Identity — ID is the MAC address, set via import
+	ID     types.String `tfsdk:"id"`
 	SiteID types.String `tfsdk:"site_id"`
 
 	// Configurable fields
@@ -92,18 +92,24 @@ func (r *DeviceAPResource) Metadata(_ context.Context, req resource.MetadataRequ
 func (r *DeviceAPResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description: "Manages the configuration of an Omada AP device. " +
-			"APs cannot be created or deleted via the API — this resource manages the configuration " +
-			"of an already-adopted AP. Import by MAC address. Delete removes from Terraform state only.",
+			"APs must be adopted through the controller UI before they can be managed. " +
+			"Use 'terraform import omada_device_ap.<name> <siteID>/<mac>' to bring an adopted AP into state.",
 		Attributes: map[string]schema.Attribute{
-			// Identity
-			"mac": schema.StringAttribute{
-				Description: "The AP MAC address (unique identifier). Used for import.",
-				Required:    true,
+			// Identity — set by import, not user config
+			"id": schema.StringAttribute{
+				Description: "The AP MAC address (set by import).",
+				Computed:    true,
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
+					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
-			"site_id": siteIDResourceSchema(),
+			"site_id": schema.StringAttribute{
+				Description: "The site ID this device belongs to. Set by import, not configurable.",
+				Computed:    true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
 
 			// Configurable
 			"name": schema.StringAttribute{
@@ -303,116 +309,14 @@ func (r *DeviceAPResource) Configure(_ context.Context, req resource.ConfigureRe
 	r.client = c
 }
 
-// Create for an AP is really just a read — APs can't be created via API.
-// This allows `terraform import` or initial adoption into state.
-func (r *DeviceAPResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var plan DeviceAPResourceModel
-	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	mac := plan.MAC.ValueString()
-	siteID := plan.SiteID.ValueString()
-
-	// Check if we need to update any fields beyond just reading
-	needsUpdate := false
-
-	// Fetch current raw config for PATCH
-	rawConfig, err := r.client.GetAPConfigRaw(ctx, siteID, mac)
-	if err != nil {
-		resp.Diagnostics.AddError("Error reading AP config", err.Error())
-		return
-	}
-
-	// Apply plan values to raw config where user specified them
-	if !plan.Name.IsNull() && !plan.Name.IsUnknown() {
-		rawConfig["name"] = plan.Name.ValueString()
-		needsUpdate = true
-	}
-	if !plan.WlanID.IsNull() && !plan.WlanID.IsUnknown() {
-		rawConfig["wlanId"] = plan.WlanID.ValueString()
-		needsUpdate = true
-	}
-	if !plan.LEDSetting.IsNull() && !plan.LEDSetting.IsUnknown() {
-		rawConfig["ledSetting"] = plan.LEDSetting.ValueInt64()
-		needsUpdate = true
-	}
-	if !plan.LLDPEnable.IsNull() && !plan.LLDPEnable.IsUnknown() {
-		rawConfig["lldpEnable"] = plan.LLDPEnable.ValueInt64()
-		needsUpdate = true
-	}
-	if !plan.MVlanEnable.IsNull() && !plan.MVlanEnable.IsUnknown() {
-		rawConfig["mvlanEnable"] = plan.MVlanEnable.ValueBool()
-		needsUpdate = true
-	}
-	if !plan.OFDMAEnable2g.IsNull() && !plan.OFDMAEnable2g.IsUnknown() {
-		rawConfig["ofdmaEnable2g"] = plan.OFDMAEnable2g.ValueBool()
-		needsUpdate = true
-	}
-	if !plan.OFDMAEnable5g.IsNull() && !plan.OFDMAEnable5g.IsUnknown() {
-		rawConfig["ofdmaEnable5g"] = plan.OFDMAEnable5g.ValueBool()
-		needsUpdate = true
-	}
-	if !plan.LoopbackDetectEnable.IsNull() && !plan.LoopbackDetectEnable.IsUnknown() {
-		rawConfig["loopbackDetectEnable"] = plan.LoopbackDetectEnable.ValueBool()
-		needsUpdate = true
-	}
-
-	// Apply radio settings
-	applyRadioSettingsToRaw(rawConfig, "radioSetting2g", plan.Radio2gEnable, plan.Radio2gChannelWidth, plan.Radio2gChannel, plan.Radio2gTxPower, plan.Radio2gTxPowerLevel, &needsUpdate)
-	applyRadioSettingsToRaw(rawConfig, "radioSetting5g", plan.Radio5gEnable, plan.Radio5gChannelWidth, plan.Radio5gChannel, plan.Radio5gTxPower, plan.Radio5gTxPowerLevel, &needsUpdate)
-
-	// Apply IP setting
-	if !plan.IPSettingMode.IsNull() && !plan.IPSettingMode.IsUnknown() {
-		if ipSetting, ok := rawConfig["ipSetting"].(map[string]interface{}); ok {
-			ipSetting["mode"] = plan.IPSettingMode.ValueString()
-		} else {
-			rawConfig["ipSetting"] = map[string]interface{}{"mode": plan.IPSettingMode.ValueString()}
-		}
-		needsUpdate = true
-	}
-
-	// Apply management VLAN
-	if !plan.MVlanNetworkID.IsNull() && !plan.MVlanNetworkID.IsUnknown() {
-		rawConfig["mvlanSetting"] = map[string]interface{}{
-			"mode":         1,
-			"lanNetworkId": plan.MVlanNetworkID.ValueString(),
-		}
-		needsUpdate = true
-	}
-
-	// Apply L3 access
-	if !plan.L3AccessEnable.IsNull() && !plan.L3AccessEnable.IsUnknown() {
-		rawConfig["l3AccessSetting"] = map[string]interface{}{"enable": plan.L3AccessEnable.ValueBool()}
-		needsUpdate = true
-	}
-
-	// Apply load balancing
-	applyLBSettingsToRaw(rawConfig, "lbSetting2g", plan.LB2gEnable, plan.LB2gMaxClients, &needsUpdate)
-	applyLBSettingsToRaw(rawConfig, "lbSetting5g", plan.LB5gEnable, plan.LB5gMaxClients, &needsUpdate)
-
-	// Apply RSSI
-	applyRSSISettingsToRaw(rawConfig, "rssiSetting2g", plan.RSSI2gEnable, plan.RSSI2gThreshold, &needsUpdate)
-	applyRSSISettingsToRaw(rawConfig, "rssiSetting5g", plan.RSSI5gEnable, plan.RSSI5gThreshold, &needsUpdate)
-
-	if needsUpdate {
-		_, err = r.client.UpdateAPConfig(ctx, siteID, mac, rawConfig)
-		if err != nil {
-			resp.Diagnostics.AddError("Error updating AP config", err.Error())
-			return
-		}
-	}
-
-	// Read back fresh state
-	apConfig, err := r.client.GetAPConfig(ctx, siteID, mac)
-	if err != nil {
-		resp.Diagnostics.AddError("Error reading AP config after create", err.Error())
-		return
-	}
-
-	apConfigToState(apConfig, &plan)
-	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+// Create always fails — APs must be adopted through the controller UI
+// and imported into Terraform state.
+func (r *DeviceAPResource) Create(_ context.Context, _ resource.CreateRequest, resp *resource.CreateResponse) {
+	resp.Diagnostics.AddError(
+		"Cannot create AP device",
+		"APs must be adopted through the Omada controller UI, then imported into Terraform:\n\n"+
+			"  terraform import omada_device_ap.<name> <siteID>/<mac>",
+	)
 }
 
 func (r *DeviceAPResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -422,7 +326,7 @@ func (r *DeviceAPResource) Read(ctx context.Context, req resource.ReadRequest, r
 		return
 	}
 
-	apConfig, err := r.client.GetAPConfig(ctx, state.SiteID.ValueString(), state.MAC.ValueString())
+	apConfig, err := r.client.GetAPConfig(ctx, state.SiteID.ValueString(), state.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading AP config", err.Error())
 		return
@@ -439,8 +343,14 @@ func (r *DeviceAPResource) Update(ctx context.Context, req resource.UpdateReques
 		return
 	}
 
-	mac := plan.MAC.ValueString()
-	siteID := plan.SiteID.ValueString()
+	var state DeviceAPResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	mac := state.ID.ValueString()
+	siteID := state.SiteID.ValueString()
 
 	// Fetch full raw config for PATCH
 	rawConfig, err := r.client.GetAPConfigRaw(ctx, siteID, mac)
@@ -524,6 +434,7 @@ func (r *DeviceAPResource) Update(ctx context.Context, req resource.UpdateReques
 	}
 
 	apConfigToState(apConfig, &plan)
+	plan.SiteID = state.SiteID
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -551,7 +462,6 @@ func (r *DeviceAPResource) ImportState(ctx context.Context, req resource.ImportS
 	}
 
 	var state DeviceAPResourceModel
-	state.MAC = types.StringValue(mac)
 	state.SiteID = types.StringValue(siteID)
 	apConfigToState(apConfig, &state)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -559,7 +469,7 @@ func (r *DeviceAPResource) ImportState(ctx context.Context, req resource.ImportS
 
 // apConfigToState maps an APConfig from the API to the Terraform state model.
 func apConfigToState(cfg *client.APConfig, state *DeviceAPResourceModel) {
-	state.MAC = types.StringValue(cfg.MAC)
+	state.ID = types.StringValue(cfg.MAC)
 	state.Name = types.StringValue(cfg.Name)
 	state.WlanID = types.StringValue(cfg.WlanID)
 
