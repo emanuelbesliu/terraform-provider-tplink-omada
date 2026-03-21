@@ -1,4 +1,5 @@
 resource "omada_network" "example" {
+  site_id        = omada_site.example.id
   name           = "IoT"
   purpose        = "vlan"
   vlan_id        = 30

@@ -1,8 +1,8 @@
-# APs cannot be created or deleted via the API. This resource manages
-# the configuration of an already-adopted AP. Destroying the resource
-# removes it from Terraform state only.
+# APs are physical devices adopted through the controller UI.
+# Import an adopted AP into Terraform state:
+#   terraform import omada_device_ap.example <siteID>/<mac>
+# Destroying the resource removes it from Terraform state only.
 resource "omada_device_ap" "example" {
-  mac           = "9C-A2-F4-00-08-12"
   name          = "Office-AP"
   wlan_group_id = omada_wlan_group.default.id
 

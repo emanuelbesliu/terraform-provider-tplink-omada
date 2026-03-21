@@ -14,6 +14,7 @@ Manages a LAN network (VLAN) on the Omada Controller.
 
 ```terraform
 resource "omada_network" "example" {
+  site_id        = omada_site.example.id
   name           = "IoT"
   purpose        = "vlan"
   vlan_id        = 30
@@ -30,6 +31,7 @@ resource "omada_network" "example" {
 ### Required
 
 - `name` (String) The name of the network.
+- `site_id` (String) The ID of the site this resource belongs to.
 - `vlan_id` (Number) The VLAN ID for the network (1-4094).
 
 ### Optional
@@ -51,6 +53,6 @@ Import is supported using the following syntax:
 The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
 
 ```shell
-# Import by network ID
-terraform import omada_network.example 6970fd12138b720dda194801
+# Import by siteID/networkID
+terraform import omada_network.example 696a40fd49039e1d13a9c3f9/6970fd12138b720dda194801
 ```

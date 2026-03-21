@@ -14,6 +14,7 @@ Manages a wireless network (SSID) on the Omada Controller.
 
 ```terraform
 resource "omada_wireless_network" "example" {
+  site_id       = omada_site.example.id
   name          = "HomeWiFi"
   wlan_group_id = omada_wlan_group.default.id
   band          = 3 # Both 2.4GHz and 5GHz
@@ -37,6 +38,7 @@ variable "wifi_password" {
 ### Required
 
 - `name` (String) The SSID name (broadcast name).
+- `site_id` (String) The ID of the site this resource belongs to.
 
 ### Optional
 
@@ -60,6 +62,6 @@ Import is supported using the following syntax:
 The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
 
 ```shell
-# Import by wlan_group_id/ssid_id
-terraform import omada_wireless_network.example 696a40fd49039e1d13a9c412/696a419049039e1d13a9c4d3
+# Import by siteID/wlanGroupID/ssidID
+terraform import omada_wireless_network.example 696a40fd49039e1d13a9c3f9/696a40fd49039e1d13a9c412/696a419049039e1d13a9c4d3
 ```

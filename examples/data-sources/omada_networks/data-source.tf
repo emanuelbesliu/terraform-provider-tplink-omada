@@ -1,5 +1,7 @@
-data "omada_networks" "all" {}
+data "omada_networks" "example" {
+  site_id = omada_site.example.id
+}
 
 output "networks" {
-  value = data.omada_networks.all.networks
+  value = data.omada_networks.example.networks
 }
