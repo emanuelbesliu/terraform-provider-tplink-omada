@@ -31,6 +31,7 @@ type NetworkResourceModel struct {
 	DHCPEnabled   types.Bool   `tfsdk:"dhcp_enabled"`
 	DHCPStart     types.String `tfsdk:"dhcp_start"`
 	DHCPEnd       types.String `tfsdk:"dhcp_end"`
+	IGMPSnoopEnable types.Bool   `tfsdk:"igmp_snoop_enable"`
 }
 
 func NewNetworkResource() resource.Resource {
@@ -86,6 +87,11 @@ func (r *NetworkResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 				Optional:    true,
 				Computed:    true,
 			},
+			"igmp_snoop_enable": schema.BoolAttribute{
+				Description: "Enable IGMP snooping on this network.",
+				Optional:    true,
+				Computed:    true,
+			},
 		},
 	}
 }
@@ -116,6 +122,7 @@ func (r *NetworkResource) Create(ctx context.Context, req resource.CreateRequest
 		Name:          plan.Name.ValueString(),
 		Vlan:          int(plan.VlanID.ValueInt64()),
 		GatewaySubnet: plan.GatewaySubnet.ValueString(),
+		IGMPSnoopEnable: plan.IGMPSnoopEnable.ValueBool(),
 	}
 	if !plan.Purpose.IsNull() && !plan.Purpose.IsUnknown() {
 		network.Purpose = plan.Purpose.ValueString()
@@ -137,15 +144,24 @@ func (r *NetworkResource) Create(ctx context.Context, req resource.CreateRequest
 
 	plan.ID = types.StringValue(created.ID)
 	plan.Purpose = types.StringValue(created.Purpose)
-	plan.GatewaySubnet = types.StringValue(created.GatewaySubnet)
-	if created.DHCPSettings != nil {
-		plan.DHCPEnabled = types.BoolValue(created.DHCPSettings.Enable)
-		plan.DHCPStart = types.StringValue(created.DHCPSettings.IPAddrStart)
-		plan.DHCPEnd = types.StringValue(created.DHCPSettings.IPAddrEnd)
-	} else {
+	plan.IGMPSnoopEnable = types.BoolValue(created.IGMPSnoopEnable)
+
+	if created.Purpose == "vlan" {
+		plan.GatewaySubnet = types.StringNull()
 		plan.DHCPEnabled = types.BoolNull()
 		plan.DHCPStart = types.StringNull()
 		plan.DHCPEnd = types.StringNull()
+	} else {
+		plan.GatewaySubnet = types.StringValue(created.GatewaySubnet)
+		if created.DHCPSettings != nil {
+			plan.DHCPEnabled = types.BoolValue(created.DHCPSettings.Enable)
+			plan.DHCPStart = types.StringValue(created.DHCPSettings.IPAddrStart)
+			plan.DHCPEnd = types.StringValue(created.DHCPSettings.IPAddrEnd)
+		} else {
+			plan.DHCPEnabled = types.BoolNull()
+			plan.DHCPStart = types.StringNull()
+			plan.DHCPEnd = types.StringNull()
+		}
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
@@ -167,15 +183,24 @@ func (r *NetworkResource) Read(ctx context.Context, req resource.ReadRequest, re
 	state.Name = types.StringValue(network.Name)
 	state.Purpose = types.StringValue(network.Purpose)
 	state.VlanID = types.Int64Value(int64(network.Vlan))
-	state.GatewaySubnet = types.StringValue(network.GatewaySubnet)
-	if network.DHCPSettings != nil {
-		state.DHCPEnabled = types.BoolValue(network.DHCPSettings.Enable)
-		state.DHCPStart = types.StringValue(network.DHCPSettings.IPAddrStart)
-		state.DHCPEnd = types.StringValue(network.DHCPSettings.IPAddrEnd)
-	} else {
+	state.IGMPSnoopEnable = types.BoolValue(network.IGMPSnoopEnable)
+
+	if network.Purpose == "vlan" {
+		state.GatewaySubnet = types.StringNull()
 		state.DHCPEnabled = types.BoolNull()
 		state.DHCPStart = types.StringNull()
 		state.DHCPEnd = types.StringNull()
+	} else {
+		state.GatewaySubnet = types.StringValue(network.GatewaySubnet)
+		if network.DHCPSettings != nil {
+			state.DHCPEnabled = types.BoolValue(network.DHCPSettings.Enable)
+			state.DHCPStart = types.StringValue(network.DHCPSettings.IPAddrStart)
+			state.DHCPEnd = types.StringValue(network.DHCPSettings.IPAddrEnd)
+		} else {
+			state.DHCPEnabled = types.BoolNull()
+			state.DHCPStart = types.StringNull()
+			state.DHCPEnd = types.StringNull()
+		}
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -199,6 +224,7 @@ func (r *NetworkResource) Update(ctx context.Context, req resource.UpdateRequest
 		Name:          plan.Name.ValueString(),
 		Vlan:          int(plan.VlanID.ValueInt64()),
 		GatewaySubnet: plan.GatewaySubnet.ValueString(),
+		IGMPSnoopEnable: plan.IGMPSnoopEnable.ValueBool(),
 	}
 	if !plan.Purpose.IsNull() {
 		network.Purpose = plan.Purpose.ValueString()
@@ -220,15 +246,24 @@ func (r *NetworkResource) Update(ctx context.Context, req resource.UpdateRequest
 
 	plan.ID = state.ID
 	plan.Purpose = types.StringValue(updated.Purpose)
-	plan.GatewaySubnet = types.StringValue(updated.GatewaySubnet)
-	if updated.DHCPSettings != nil {
-		plan.DHCPEnabled = types.BoolValue(updated.DHCPSettings.Enable)
-		plan.DHCPStart = types.StringValue(updated.DHCPSettings.IPAddrStart)
-		plan.DHCPEnd = types.StringValue(updated.DHCPSettings.IPAddrEnd)
-	} else {
+	plan.IGMPSnoopEnable = types.BoolValue(updated.IGMPSnoopEnable)
+
+	if updated.Purpose == "vlan" {
+		plan.GatewaySubnet = types.StringNull()
 		plan.DHCPEnabled = types.BoolNull()
 		plan.DHCPStart = types.StringNull()
 		plan.DHCPEnd = types.StringNull()
+	} else {
+		plan.GatewaySubnet = types.StringValue(updated.GatewaySubnet)
+		if updated.DHCPSettings != nil {
+			plan.DHCPEnabled = types.BoolValue(updated.DHCPSettings.Enable)
+			plan.DHCPStart = types.StringValue(updated.DHCPSettings.IPAddrStart)
+			plan.DHCPEnd = types.StringValue(updated.DHCPSettings.IPAddrEnd)
+		} else {
+			plan.DHCPEnabled = types.BoolNull()
+			plan.DHCPStart = types.StringNull()
+			plan.DHCPEnd = types.StringNull()
+		}
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
@@ -256,20 +291,29 @@ func (r *NetworkResource) ImportState(ctx context.Context, req resource.ImportSt
 	}
 
 	state := NetworkResourceModel{
-		ID:            types.StringValue(network.ID),
-		Name:          types.StringValue(network.Name),
-		Purpose:       types.StringValue(network.Purpose),
-		VlanID:        types.Int64Value(int64(network.Vlan)),
-		GatewaySubnet: types.StringValue(network.GatewaySubnet),
+		ID:              types.StringValue(network.ID),
+		Name:            types.StringValue(network.Name),
+		Purpose:         types.StringValue(network.Purpose),
+		VlanID:          types.Int64Value(int64(network.Vlan)),
+		IGMPSnoopEnable: types.BoolValue(network.IGMPSnoopEnable),
 	}
-	if network.DHCPSettings != nil {
-		state.DHCPEnabled = types.BoolValue(network.DHCPSettings.Enable)
-		state.DHCPStart = types.StringValue(network.DHCPSettings.IPAddrStart)
-		state.DHCPEnd = types.StringValue(network.DHCPSettings.IPAddrEnd)
-	} else {
+
+	if network.Purpose == "vlan" {
+		state.GatewaySubnet = types.StringNull()
 		state.DHCPEnabled = types.BoolNull()
 		state.DHCPStart = types.StringNull()
 		state.DHCPEnd = types.StringNull()
+	} else {
+		state.GatewaySubnet = types.StringValue(network.GatewaySubnet)
+		if network.DHCPSettings != nil {
+			state.DHCPEnabled = types.BoolValue(network.DHCPSettings.Enable)
+			state.DHCPStart = types.StringValue(network.DHCPSettings.IPAddrStart)
+			state.DHCPEnd = types.StringValue(network.DHCPSettings.IPAddrEnd)
+		} else {
+			state.DHCPEnabled = types.BoolNull()
+			state.DHCPStart = types.StringNull()
+			state.DHCPEnd = types.StringNull()
+		}
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
