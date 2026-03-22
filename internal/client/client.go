@@ -404,7 +404,6 @@ func (c *Client) resolveSiteID(ctx context.Context, siteName string) error {
 func (c *Client) ensureAuth(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
 	if c.token == "" {
 		if err := c.login(ctx); err != nil {
 			return err
@@ -545,15 +544,17 @@ func isEmptyResult(result json.RawMessage) bool {
 	return trimmed == "" || trimmed == "null" || trimmed == "{}" || trimmed == "\"\"" || trimmed == "[]"
 }
 
-// GetSiteID returns the resolved site ID.
-func (c *Client) GetSiteID() string {
-	return c.siteID
+// isAgileSeriesError returns true if the API error indicates the switch requires
+// the Agile Series (/es/) path (error code -39742).
+func isAgileSeriesError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "-39742")
 }
 
+// GetSiteID returns the resolved site ID.
+func (c *Client) GetSiteID() string { return c.siteID }
+
 // GetOmadacID returns the controller ID.
-func (c *Client) GetOmadacID() string {
-	return c.omadacID
-}
+func (c *Client) GetOmadacID() string { return c.omadacID }
 
 // --- Sites ---
 
@@ -1161,10 +1162,11 @@ type APRadioSetting struct {
 // APIPSetting holds IP configuration for the AP.
 type APIPSetting struct {
 	Mode         string `json:"mode"`
-	Fallback     bool   `json:"fallback,omitempty"`
+	Fallback     bool   `json:"fallback"`
 	FallbackIP   string `json:"fallbackIp,omitempty"`
 	FallbackMask string `json:"fallbackMask,omitempty"`
-	UseFixedAddr bool   `json:"useFixedAddr,omitempty"`
+	FallbackGate string `json:"fallbackGate,omitempty"`
+	UseFixedAddr bool   `json:"useFixedAddr"`
 }
 
 // APMVlanSetting holds management VLAN settings.
@@ -1228,8 +1230,8 @@ type APLanPortSetting struct {
 }
 
 // APConfig represents the full configurable AP object from GET /eaps/{mac}.
-// Fields that may be absent on certain AP models (e.g., EAP115 has no 5GHz,
-// no LLDP, no OFDMA) use pointer types so we can distinguish absent from zero.
+// Fields that may be absent on certain AP models use pointer types so we can
+// distinguish absent from zero value.
 type APConfig struct {
 	Type            string          `json:"type,omitempty"`
 	MAC             string          `json:"mac,omitempty"`
@@ -1250,9 +1252,8 @@ type APConfig struct {
 	OFDMAEnable5g        *bool `json:"ofdmaEnable5g,omitempty"`
 	LoopbackDetectEnable *bool `json:"loopbackDetectEnable,omitempty"`
 
-	MVlanEnable  bool            `json:"mvlanEnable"`
-	MVlanSetting *APMVlanSetting `json:"mvlanSetting,omitempty"`
-
+	MVlanEnable     bool               `json:"mvlanEnable"`
+	MVlanSetting    *APMVlanSetting    `json:"mvlanSetting,omitempty"`
 	L3AccessSetting *APL3AccessSetting `json:"l3AccessSetting,omitempty"`
 	LBSetting2g     *APLBSetting       `json:"lbSetting2g,omitempty"`
 	LBSetting5g     *APLBSetting       `json:"lbSetting5g,omitempty"`
@@ -1308,8 +1309,10 @@ func (c *Client) GetAPConfigRaw(ctx context.Context, mac string) (map[string]int
 	return raw, nil
 }
 
-// UpdateAPConfig updates an AP configuration via PATCH.
-// Similar to SSIDs, this likely requires the full object minus read-only fields.
+// UpdateAPConfig updates AP general configuration via PATCH /eaps/{mac}.
+// This handles: name, wlanId, ledSetting, ipSetting, mvlanEnable, mvlanSetting,
+// loopbackDetectEnable. Radio, advanced (OFDMA/LB/RSSI), and services (LLDP/L3)
+// settings must be updated via their dedicated endpoints.
 func (c *Client) UpdateAPConfig(ctx context.Context, mac string, config map[string]interface{}) (*APConfig, error) {
 	// Remove read-only / status fields that must not be in PATCH
 	readOnlyFields := []string{
@@ -1338,14 +1341,80 @@ func (c *Client) UpdateAPConfig(ctx context.Context, mac string, config map[stri
 	return &updated, nil
 }
 
+// APRadioConfig is the payload for PUT /eaps/{mac}/config/radios.
+// The Omada API ignores radio settings sent via the main PATCH endpoint;
+// they must be sent to this dedicated endpoint.
+type APRadioConfig struct {
+	RadioSetting2g *APRadioSetting `json:"radioSetting2g,omitempty"`
+	RadioSetting5g *APRadioSetting `json:"radioSetting5g,omitempty"`
+}
+
+// APAdvancedConfig is the payload for PUT /eaps/{mac}/config/advanced.
+// Handles OFDMA, load balancing, RSSI, and QoS settings.
+// The Omada API ignores these fields when sent via the main PATCH endpoint.
+type APAdvancedConfig struct {
+	OFDMAEnable2g *bool          `json:"ofdmaEnable2g,omitempty"`
+	OFDMAEnable5g *bool          `json:"ofdmaEnable5g,omitempty"`
+	LBSetting2g   *APLBSetting   `json:"lbSetting2g,omitempty"`
+	LBSetting5g   *APLBSetting   `json:"lbSetting5g,omitempty"`
+	RSSISetting2g *APRSSISetting `json:"rssiSetting2g,omitempty"`
+	RSSISetting5g *APRSSISetting `json:"rssiSetting5g,omitempty"`
+	QoSSetting2g  *APQoSSetting  `json:"qosSetting2g,omitempty"`
+	QoSSetting5g  *APQoSSetting  `json:"qosSetting5g,omitempty"`
+}
+
+// APServicesConfig is the payload for PUT /eaps/{mac}/config/services.
+// Handles LLDP and L3 access settings.
+// The Omada API ignores these fields when sent via the main PATCH endpoint.
+type APServicesConfig struct {
+	LLDPEnable      *int               `json:"lldpEnable,omitempty"`
+	L3AccessSetting *APL3AccessSetting `json:"l3AccessSetting,omitempty"`
+	SNMP            *SwitchSNMP        `json:"snmp,omitempty"`
+}
+
+// UpdateAPRadioConfig updates AP radio settings via PUT /eaps/{mac}/config/radios.
+func (c *Client) UpdateAPRadioConfig(ctx context.Context, mac string, config *APRadioConfig) error {
+	_, err := c.doSiteRequest(ctx, http.MethodPut, fmt.Sprintf("/eaps/%s/config/radios", mac), config)
+	return err
+}
+
+// UpdateAPAdvancedConfig updates AP advanced settings via PUT /eaps/{mac}/config/advanced.
+func (c *Client) UpdateAPAdvancedConfig(ctx context.Context, mac string, config *APAdvancedConfig) error {
+	_, err := c.doSiteRequest(ctx, http.MethodPut, fmt.Sprintf("/eaps/%s/config/advanced", mac), config)
+	return err
+}
+
+// UpdateAPServicesConfig updates AP services settings via PUT /eaps/{mac}/config/services.
+func (c *Client) UpdateAPServicesConfig(ctx context.Context, mac string, config *APServicesConfig) error {
+	_, err := c.doSiteRequest(ctx, http.MethodPut, fmt.Sprintf("/eaps/%s/config/services", mac), config)
+	return err
+}
+
 // --- Switch Devices ---
+//
+// The Omada controller uses different API path prefixes for Agile Series (ES)
+// switches vs standard switches:
+//
+//   Standard:      /switches/{mac}/...
+//   Agile Series:  /switches/es/{mac}/...
+//
+// Detection is automatic:
+//   - GET always tries /switches/{mac} first. If the controller returns error
+//     -39742 ("Agile Series Switch should use the corresponding path"), the
+//     request is automatically retried with /switches/es/{mac}.
+//   - Write operations use the "es" boolean field present in the GET response
+//     to select the correct path.
+//
+// Port updates (PATCH /switches/{mac}/ports/{port}) work universally across
+// all switch series and do not require the /es/ prefix.
 
 // SwitchIPSetting holds IP configuration for a switch.
 type SwitchIPSetting struct {
 	Mode         string `json:"mode"`
-	Fallback     bool   `json:"fallback,omitempty"`
+	Fallback     bool   `json:"fallback"`
 	FallbackIP   string `json:"fallbackIp,omitempty"`
 	FallbackMask string `json:"fallbackMask,omitempty"`
+	FallbackGate string `json:"fallbackGate,omitempty"`
 }
 
 // SwitchSNMP holds SNMP settings for a switch.
@@ -1375,6 +1444,14 @@ type SwitchPort struct {
 	Speed                 int      `json:"speed"`
 }
 
+// SwitchServiceConfig is the payload for PUT /switches/{mac}/config/service.
+// Handles loopback detection and STP settings.
+// The Omada API ignores these fields when sent via the general config endpoint.
+type SwitchServiceConfig struct {
+	LoopbackDetectEnable bool `json:"loopbackDetectEnable"`
+	STP                  *int `json:"stp,omitempty"`
+}
+
 // SwitchConfig represents the full configurable switch object from GET /switches/{mac}.
 type SwitchConfig struct {
 	Type                 string           `json:"type,omitempty"`
@@ -1399,29 +1476,23 @@ type SwitchConfig struct {
 	Jumbo                int              `json:"jumbo"`
 	LagHashAlg           int              `json:"lagHashAlg"`
 	Ports                []SwitchPort     `json:"ports,omitempty"`
-
 	// Complex fields stored as raw JSON
 	Lags json.RawMessage `json:"lags,omitempty"`
 }
 
-// GetSwitchConfig returns the full configuration for a switch by MAC address.
-func (c *Client) GetSwitchConfig(ctx context.Context, mac string) (*SwitchConfig, error) {
+// getSwitchRaw fetches raw switch config, automatically retrying with the
+// Agile Series path (/switches/es/{mac}) if the standard path returns -39742.
+func (c *Client) getSwitchRaw(ctx context.Context, mac string) (map[string]interface{}, error) {
 	resp, err := c.doSiteRequest(ctx, http.MethodGet, fmt.Sprintf("/switches/%s", mac), nil)
 	if err != nil {
-		return nil, err
-	}
-	var config SwitchConfig
-	if err := json.Unmarshal(resp.Result, &config); err != nil {
-		return nil, fmt.Errorf("decoding switch config: %w", err)
-	}
-	return &config, nil
-}
-
-// GetSwitchConfigRaw returns the raw JSON for a switch (needed for PATCH).
-func (c *Client) GetSwitchConfigRaw(ctx context.Context, mac string) (map[string]interface{}, error) {
-	resp, err := c.doSiteRequest(ctx, http.MethodGet, fmt.Sprintf("/switches/%s", mac), nil)
-	if err != nil {
-		return nil, err
+		if isAgileSeriesError(err) {
+			resp, err = c.doSiteRequest(ctx, http.MethodGet, fmt.Sprintf("/switches/es/%s", mac), nil)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			return nil, err
+		}
 	}
 	var raw map[string]interface{}
 	if err := json.Unmarshal(resp.Result, &raw); err != nil {
@@ -1430,13 +1501,46 @@ func (c *Client) GetSwitchConfigRaw(ctx context.Context, mac string) (map[string
 	return raw, nil
 }
 
-// UpdateSwitchConfig updates a switch configuration via PATCH.
+// GetSwitchConfig returns the full configuration for a switch by MAC address.
+// Automatically handles both standard and Agile Series (ES) switches.
+func (c *Client) GetSwitchConfig(ctx context.Context, mac string) (*SwitchConfig, error) {
+	raw, err := c.getSwitchRaw(ctx, mac)
+	if err != nil {
+		return nil, err
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return nil, fmt.Errorf("re-marshaling switch config: %w", err)
+	}
+	var config SwitchConfig
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("decoding switch config: %w", err)
+	}
+	return &config, nil
+}
+
+// GetSwitchConfigRaw returns the raw JSON for a switch.
+// Automatically handles both standard and Agile Series (ES) switches.
+func (c *Client) GetSwitchConfigRaw(ctx context.Context, mac string) (map[string]interface{}, error) {
+	return c.getSwitchRaw(ctx, mac)
+}
+
+// UpdateSwitchConfig updates switch-level general configuration.
+//
+// The path prefix is selected based on the "es" field in the raw GET response:
+//   - Agile Series (ES): PATCH /switches/es/{mac}/config/general
+//   - Standard switches: PATCH /switches/{mac}/config/general
+//
+// The /config/general path was confirmed via browser capture on an ES205G
+// (Agile Series). The standard switch path follows the same convention by
+// analogy — community testing on TL/JetStream series is welcome.
+//
+// Port updates are handled separately by UpdateSwitchPort.
 func (c *Client) UpdateSwitchConfig(ctx context.Context, mac string, config map[string]interface{}) (*SwitchConfig, error) {
-	// Remove read-only / status fields that must not be in PATCH
 	readOnlyFields := []string{
 		"type", "mac", "model", "modelVersion", "compoundModel", "showModel",
 		"firmwareVersion", "version", "hwVersion", "ip", "publicIp",
-		"status", "statusCategory", "es", "site", "siteName", "omadacId",
+		"status", "statusCategory", "site", "siteName", "omadacId",
 		"compatible", "category", "sn", "addedInAdvanced", "customId",
 		"remember", "rememberDevice", "boundSiteTemplate", "deviceSeriesType",
 		"resource", "ecspFirstVersion", "deviceMisc", "devCap",
@@ -1444,30 +1548,27 @@ func (c *Client) UpdateSwitchConfig(ctx context.Context, mac string, config map[
 		"poeTotalPower", "poeRemain", "poeRemainPercent", "fanStatus",
 		"download", "upload", "supportVlanIf", "speeds", "loop", "loopbackNum",
 		"sdm", "terminalPrefix", "supportHealth", "downlinkList",
-		"tagIds", "ipv6List",
+		"tagIds", "ipv6List", "ports", "lags",
 	}
 	for _, f := range readOnlyFields {
 		delete(config, f)
 	}
 
-	// Clean up port objects — remove read-only port fields
-	if ports, ok := config["ports"].([]interface{}); ok {
-		for _, p := range ports {
-			if port, ok := p.(map[string]interface{}); ok {
-				delete(port, "portStatus")
-				delete(port, "portCap")
-				delete(port, "portSpeedCap")
-				delete(port, "standardPort")
-				delete(port, "configStack")
-				delete(port, "fecSupport")
-				delete(port, "fecCap")
-				delete(port, "configMlagPeerLink")
-				delete(port, "configMlagDad")
-			}
-		}
+	// Determine series from the "es" field then remove it before sending
+	// Note, the v1 API shows a PATCH for this, but v2 seems to require a PUT
+	// THIS WAS ONLY TESTED USING ES SWITCH
+	// ITS POSSIBLE ITS PUT FOR ES AND PATCH FOR THE REST (but that would be odd)
+	isES, _ := config["es"].(bool)
+	delete(config, "es")
+
+	var path string
+	if isES {
+		path = fmt.Sprintf("/switches/es/%s/config/general", mac)
+	} else {
+		path = fmt.Sprintf("/switches/%s/config/general", mac)
 	}
 
-	resp, err := c.doSiteRequest(ctx, http.MethodPatch, fmt.Sprintf("/switches/%s", mac), config)
+	resp, err := c.doSiteRequest(ctx, http.MethodPut, path, config)
 	if err != nil {
 		return nil, err
 	}
@@ -1479,4 +1580,25 @@ func (c *Client) UpdateSwitchConfig(ctx context.Context, mac string, config map[
 		return nil, fmt.Errorf("decoding updated switch config: %w", err)
 	}
 	return &updated, nil
+}
+
+// UpdateSwitchPort updates a single port on a switch via PATCH /switches/{mac}/ports/{port}.
+// This endpoint works universally across all switch series without the /es/ prefix.
+func (c *Client) UpdateSwitchPort(ctx context.Context, mac string, port int, config map[string]interface{}) error {
+	_, err := c.doSiteRequest(ctx, http.MethodPatch, fmt.Sprintf("/switches/%s/ports/%d", mac, port), config)
+	return err
+}
+
+// UpdateSwitchServiceConfig updates switch service settings via PUT /switches/{mac}/config/service.
+// The ES series path is determined from the "es" field in the raw GET response,
+// consistent with UpdateSwitchConfig.
+func (c *Client) UpdateSwitchServiceConfig(ctx context.Context, mac string, isES bool, config *SwitchServiceConfig) error {
+	var path string
+	if isES {
+		path = fmt.Sprintf("/switches/es/%s/config/service", mac)
+	} else {
+		path = fmt.Sprintf("/switches/%s/config/service", mac)
+	}
+	_, err := c.doSiteRequest(ctx, http.MethodPut, path, config)
+	return err
 }

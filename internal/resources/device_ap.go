@@ -46,7 +46,11 @@ type DeviceAPResourceModel struct {
 	Radio5gTxPowerLevel types.Int64  `tfsdk:"radio_5g_tx_power_level"`
 
 	// IP Settings
-	IPSettingMode types.String `tfsdk:"ip_setting_mode"`
+	IPSettingMode         types.String `tfsdk:"ip_setting_mode"`
+	IPSettingFallback     types.Bool   `tfsdk:"ip_setting_fallback"`
+	IPSettingFallbackIP   types.String `tfsdk:"ip_setting_fallback_ip"`
+	IPSettingFallbackMask types.String `tfsdk:"ip_setting_fallback_mask"`
+	IPSettingFallbackGate types.String `tfsdk:"ip_setting_fallback_gate"`
 
 	// LED / LLDP
 	LEDSetting types.Int64 `tfsdk:"led_setting"`
@@ -94,7 +98,6 @@ func (r *DeviceAPResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			"APs cannot be created or deleted via the API — this resource manages the configuration " +
 			"of an already-adopted AP. Import by MAC address. Delete removes from Terraform state only.",
 		Attributes: map[string]schema.Attribute{
-			// Identity
 			"mac": schema.StringAttribute{
 				Description: "The AP MAC address (unique identifier). Used for import.",
 				Required:    true,
@@ -102,8 +105,6 @@ func (r *DeviceAPResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-
-			// Configurable
 			"name": schema.StringAttribute{
 				Description: "The display name of the AP.",
 				Optional:    true,
@@ -114,8 +115,6 @@ func (r *DeviceAPResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				Optional:    true,
 				Computed:    true,
 			},
-
-			// Radio 2.4GHz
 			"radio_2g_enable": schema.BoolAttribute{
 				Description: "Enable 2.4GHz radio.",
 				Optional:    true,
@@ -123,12 +122,12 @@ func (r *DeviceAPResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				Default:     booldefault.StaticBool(true),
 			},
 			"radio_2g_channel_width": schema.StringAttribute{
-				Description: "2.4GHz channel width (e.g., '0' for auto, '1' for 20MHz, '2' for 40MHz).",
+				Description: "2.4GHz channel width. RADIO_20=2; RADIO_40=3; RADIO_40_20=4 (Auto).",
 				Optional:    true,
 				Computed:    true,
 			},
 			"radio_2g_channel": schema.StringAttribute{
-				Description: "2.4GHz channel (e.g., '0' for auto, '1'-'11' for specific).",
+				Description: "2.4GHz channel (0 for auto).",
 				Optional:    true,
 				Computed:    true,
 			},
@@ -143,20 +142,18 @@ func (r *DeviceAPResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				Computed:    true,
 				Default:     int64default.StaticInt64(4),
 			},
-
-			// Radio 5GHz — absent on 2.4GHz-only APs (e.g., EAP115)
 			"radio_5g_enable": schema.BoolAttribute{
 				Description: "Enable 5GHz radio. Null on 2.4GHz-only APs.",
 				Optional:    true,
 				Computed:    true,
 			},
 			"radio_5g_channel_width": schema.StringAttribute{
-				Description: "5GHz channel width (e.g., '0' for auto, '2' for 40MHz, '4' for 80MHz).",
+				Description: "5GHz channel width. RADIO_80=5; RADIO_80_40_20=6 (Auto); RADIO_160=7.",
 				Optional:    true,
 				Computed:    true,
 			},
 			"radio_5g_channel": schema.StringAttribute{
-				Description: "5GHz channel (e.g., '0' for auto, specific channel numbers).",
+				Description: "5GHz channel (0 for auto).",
 				Optional:    true,
 				Computed:    true,
 			},
@@ -170,15 +167,31 @@ func (r *DeviceAPResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				Optional:    true,
 				Computed:    true,
 			},
-
-			// IP Settings
 			"ip_setting_mode": schema.StringAttribute{
 				Description: "IP address mode: 'dhcp' or 'static'.",
 				Optional:    true,
 				Computed:    true,
 			},
-
-			// LED / LLDP
+			"ip_setting_fallback": schema.BoolAttribute{
+				Description: "Enable fallback static IP when DHCP fails (dhcp mode only).",
+				Optional:    true,
+				Computed:    true,
+			},
+			"ip_setting_fallback_ip": schema.StringAttribute{
+				Description: "Fallback static IP address (used when ip_setting_fallback = true).",
+				Optional:    true,
+				Computed:    true,
+			},
+			"ip_setting_fallback_mask": schema.StringAttribute{
+				Description: "Fallback subnet mask (used when ip_setting_fallback = true).",
+				Optional:    true,
+				Computed:    true,
+			},
+			"ip_setting_fallback_gate": schema.StringAttribute{
+				Description: "Fallback gateway IP (used when ip_setting_fallback = true).",
+				Optional:    true,
+				Computed:    true,
+			},
 			"led_setting": schema.Int64Attribute{
 				Description: "LED setting: 0=Off, 1=On, 2=Follow site setting.",
 				Optional:    true,
@@ -190,8 +203,6 @@ func (r *DeviceAPResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				Optional:    true,
 				Computed:    true,
 			},
-
-			// Management VLAN
 			"management_vlan_enable": schema.BoolAttribute{
 				Description: "Enable management VLAN.",
 				Optional:    true,
@@ -202,8 +213,6 @@ func (r *DeviceAPResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				Optional:    true,
 				Computed:    true,
 			},
-
-			// Feature toggles
 			"ofdma_enable_2g": schema.BoolAttribute{
 				Description: "Enable OFDMA on 2.4GHz.",
 				Optional:    true,
@@ -224,8 +233,6 @@ func (r *DeviceAPResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				Optional:    true,
 				Computed:    true,
 			},
-
-			// Load balancing
 			"lb_2g_enable": schema.BoolAttribute{
 				Description: "Enable load balancing on 2.4GHz.",
 				Optional:    true,
@@ -246,8 +253,6 @@ func (r *DeviceAPResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				Optional:    true,
 				Computed:    true,
 			},
-
-			// RSSI
 			"rssi_2g_enable": schema.BoolAttribute{
 				Description: "Enable RSSI threshold on 2.4GHz.",
 				Optional:    true,
@@ -268,10 +273,8 @@ func (r *DeviceAPResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				Optional:    true,
 				Computed:    true,
 			},
-
-			// Read-only
 			"model": schema.StringAttribute{
-				Description: "The AP model (e.g., 'EAP655-Wall'). Read-only.",
+				Description: "The AP model. Read-only.",
 				Computed:    true,
 			},
 			"ip": schema.StringAttribute{
@@ -301,8 +304,206 @@ func (r *DeviceAPResource) Configure(_ context.Context, req resource.ConfigureRe
 	r.client = c
 }
 
-// Create for an AP is really just a read — APs can't be created via API.
-// This allows `terraform import` or initial adoption into state.
+// applyAPPlanToRaw merges general plan values into rawConfig for the main PATCH call.
+// Note: radio settings, OFDMA, LB, RSSI, LLDP, and L3 access are handled by
+// separate dedicated endpoints and must NOT be included here — the Omada API
+// silently ignores these fields on the main PATCH endpoint.
+func applyAPPlanToRaw(rawConfig map[string]interface{}, plan *DeviceAPResourceModel) {
+	if !plan.Name.IsNull() && !plan.Name.IsUnknown() {
+		rawConfig["name"] = plan.Name.ValueString()
+	}
+	if !plan.WlanID.IsNull() && !plan.WlanID.IsUnknown() {
+		rawConfig["wlanId"] = plan.WlanID.ValueString()
+	}
+	if !plan.LEDSetting.IsNull() && !plan.LEDSetting.IsUnknown() {
+		rawConfig["ledSetting"] = plan.LEDSetting.ValueInt64()
+	}
+	if !plan.MVlanEnable.IsNull() && !plan.MVlanEnable.IsUnknown() {
+		rawConfig["mvlanEnable"] = plan.MVlanEnable.ValueBool()
+	}
+	if !plan.LoopbackDetectEnable.IsNull() && !plan.LoopbackDetectEnable.IsUnknown() {
+		rawConfig["loopbackDetectEnable"] = plan.LoopbackDetectEnable.ValueBool()
+	}
+
+	// Management VLAN
+	if !plan.MVlanNetworkID.IsNull() && !plan.MVlanNetworkID.IsUnknown() {
+		rawConfig["mvlanSetting"] = map[string]interface{}{
+			"mode":         1,
+			"lanNetworkId": plan.MVlanNetworkID.ValueString(),
+		}
+	}
+
+	// IP setting
+	if !plan.IPSettingMode.IsNull() && !plan.IPSettingMode.IsUnknown() {
+		mode := plan.IPSettingMode.ValueString()
+		if mode == "dhcp" {
+			fallback := !plan.IPSettingFallback.IsNull() && !plan.IPSettingFallback.IsUnknown() && plan.IPSettingFallback.ValueBool()
+			ipSetting := map[string]interface{}{
+				"mode":         "dhcp",
+				"fallback":     fallback,
+				"useFixedAddr": false,
+			}
+			// Only include fallback IP fields when fallback is enabled.
+			// The Omada API rejects empty strings for these IP fields.
+			if fallback {
+				if !plan.IPSettingFallbackIP.IsNull() && !plan.IPSettingFallbackIP.IsUnknown() {
+					ipSetting["fallbackIp"] = plan.IPSettingFallbackIP.ValueString()
+				}
+				if !plan.IPSettingFallbackMask.IsNull() && !plan.IPSettingFallbackMask.IsUnknown() {
+					ipSetting["fallbackMask"] = plan.IPSettingFallbackMask.ValueString()
+				}
+				if !plan.IPSettingFallbackGate.IsNull() && !plan.IPSettingFallbackGate.IsUnknown() {
+					ipSetting["fallbackGate"] = plan.IPSettingFallbackGate.ValueString()
+				}
+			}
+			rawConfig["ipSetting"] = ipSetting
+		}
+	}
+}
+
+// buildAPRadioConfig builds the radio config payload for PUT /eaps/{mac}/config/radios.
+func buildAPRadioConfig(plan *DeviceAPResourceModel) *client.APRadioConfig {
+	config := &client.APRadioConfig{}
+
+	has2g := !plan.Radio2gEnable.IsNull() || !plan.Radio2gChannelWidth.IsNull() ||
+		!plan.Radio2gChannel.IsNull() || !plan.Radio2gTxPower.IsNull() || !plan.Radio2gTxPowerLevel.IsNull()
+	has5g := !plan.Radio5gEnable.IsNull() || !plan.Radio5gChannelWidth.IsNull() ||
+		!plan.Radio5gChannel.IsNull() || !plan.Radio5gTxPower.IsNull() || !plan.Radio5gTxPowerLevel.IsNull()
+
+	if has2g {
+		r := &client.APRadioSetting{}
+		if !plan.Radio2gEnable.IsNull() && !plan.Radio2gEnable.IsUnknown() {
+			r.RadioEnable = plan.Radio2gEnable.ValueBool()
+		}
+		if !plan.Radio2gChannelWidth.IsNull() && !plan.Radio2gChannelWidth.IsUnknown() {
+			r.ChannelWidth = plan.Radio2gChannelWidth.ValueString()
+		}
+		if !plan.Radio2gChannel.IsNull() && !plan.Radio2gChannel.IsUnknown() {
+			r.Channel = plan.Radio2gChannel.ValueString()
+		}
+		if !plan.Radio2gTxPower.IsNull() && !plan.Radio2gTxPower.IsUnknown() {
+			r.TxPower = int(plan.Radio2gTxPower.ValueInt64())
+		}
+		if !plan.Radio2gTxPowerLevel.IsNull() && !plan.Radio2gTxPowerLevel.IsUnknown() {
+			r.TxPowerLevel = int(plan.Radio2gTxPowerLevel.ValueInt64())
+		}
+		config.RadioSetting2g = r
+	}
+
+	if has5g {
+		r := &client.APRadioSetting{}
+		if !plan.Radio5gEnable.IsNull() && !plan.Radio5gEnable.IsUnknown() {
+			r.RadioEnable = plan.Radio5gEnable.ValueBool()
+		}
+		if !plan.Radio5gChannelWidth.IsNull() && !plan.Radio5gChannelWidth.IsUnknown() {
+			r.ChannelWidth = plan.Radio5gChannelWidth.ValueString()
+		}
+		if !plan.Radio5gChannel.IsNull() && !plan.Radio5gChannel.IsUnknown() {
+			r.Channel = plan.Radio5gChannel.ValueString()
+		}
+		if !plan.Radio5gTxPower.IsNull() && !plan.Radio5gTxPower.IsUnknown() {
+			r.TxPower = int(plan.Radio5gTxPower.ValueInt64())
+		}
+		if !plan.Radio5gTxPowerLevel.IsNull() && !plan.Radio5gTxPowerLevel.IsUnknown() {
+			r.TxPowerLevel = int(plan.Radio5gTxPowerLevel.ValueInt64())
+		}
+		config.RadioSetting5g = r
+	}
+
+	return config
+}
+
+// buildAPAdvancedConfig builds the advanced config payload for PUT /eaps/{mac}/config/advanced.
+func buildAPAdvancedConfig(plan *DeviceAPResourceModel) *client.APAdvancedConfig {
+	config := &client.APAdvancedConfig{}
+
+	if !plan.OFDMAEnable2g.IsNull() && !plan.OFDMAEnable2g.IsUnknown() {
+		v := plan.OFDMAEnable2g.ValueBool()
+		config.OFDMAEnable2g = &v
+	}
+	if !plan.OFDMAEnable5g.IsNull() && !plan.OFDMAEnable5g.IsUnknown() {
+		v := plan.OFDMAEnable5g.ValueBool()
+		config.OFDMAEnable5g = &v
+	}
+	if !plan.LB2gEnable.IsNull() && !plan.LB2gEnable.IsUnknown() {
+		lb := &client.APLBSetting{LBEnable: plan.LB2gEnable.ValueBool()}
+		if !plan.LB2gMaxClients.IsNull() && !plan.LB2gMaxClients.IsUnknown() {
+			lb.MaxClients = int(plan.LB2gMaxClients.ValueInt64())
+		}
+		config.LBSetting2g = lb
+	}
+	if !plan.LB5gEnable.IsNull() && !plan.LB5gEnable.IsUnknown() {
+		lb := &client.APLBSetting{LBEnable: plan.LB5gEnable.ValueBool()}
+		if !plan.LB5gMaxClients.IsNull() && !plan.LB5gMaxClients.IsUnknown() {
+			lb.MaxClients = int(plan.LB5gMaxClients.ValueInt64())
+		}
+		config.LBSetting5g = lb
+	}
+	if !plan.RSSI2gEnable.IsNull() && !plan.RSSI2gEnable.IsUnknown() {
+		rssi := &client.APRSSISetting{RSSIEnable: plan.RSSI2gEnable.ValueBool()}
+		if !plan.RSSI2gThreshold.IsNull() && !plan.RSSI2gThreshold.IsUnknown() {
+			rssi.Threshold = int(plan.RSSI2gThreshold.ValueInt64())
+		}
+		config.RSSISetting2g = rssi
+	}
+	if !plan.RSSI5gEnable.IsNull() && !plan.RSSI5gEnable.IsUnknown() {
+		rssi := &client.APRSSISetting{RSSIEnable: plan.RSSI5gEnable.ValueBool()}
+		if !plan.RSSI5gThreshold.IsNull() && !plan.RSSI5gThreshold.IsUnknown() {
+			rssi.Threshold = int(plan.RSSI5gThreshold.ValueInt64())
+		}
+		config.RSSISetting5g = rssi
+	}
+
+	return config
+}
+
+// buildAPServicesConfig builds the services config payload for PUT /eaps/{mac}/config/services.
+func buildAPServicesConfig(plan *DeviceAPResourceModel) *client.APServicesConfig {
+	config := &client.APServicesConfig{}
+
+	if !plan.LLDPEnable.IsNull() && !plan.LLDPEnable.IsUnknown() {
+		v := int(plan.LLDPEnable.ValueInt64())
+		config.LLDPEnable = &v
+	}
+	if !plan.L3AccessEnable.IsNull() && !plan.L3AccessEnable.IsUnknown() {
+		config.L3AccessSetting = &client.APL3AccessSetting{Enable: plan.L3AccessEnable.ValueBool()}
+	}
+
+	return config
+}
+
+// applyAPConfig applies all plan changes across the main PATCH and three dedicated endpoints.
+func (r *DeviceAPResource) applyAPConfig(ctx context.Context, mac string, plan *DeviceAPResourceModel) error {
+	// 1. Main PATCH — name, wlanId, ledSetting, ipSetting, mvlanEnable, loopbackDetectEnable
+	rawConfig, err := r.client.GetAPConfigRaw(ctx, mac)
+	if err != nil {
+		return fmt.Errorf("reading AP config: %w", err)
+	}
+	applyAPPlanToRaw(rawConfig, plan)
+	if _, err := r.client.UpdateAPConfig(ctx, mac, rawConfig); err != nil {
+		return fmt.Errorf("updating AP config: %w", err)
+	}
+
+	// 2. Radio settings — PUT /eaps/{mac}/config/radios
+	if err := r.client.UpdateAPRadioConfig(ctx, mac, buildAPRadioConfig(plan)); err != nil {
+		return fmt.Errorf("updating AP radio config: %w", err)
+	}
+
+	// 3. Advanced settings — PUT /eaps/{mac}/config/advanced
+	// (OFDMA, load balancing, RSSI — silently ignored by main PATCH)
+	if err := r.client.UpdateAPAdvancedConfig(ctx, mac, buildAPAdvancedConfig(plan)); err != nil {
+		return fmt.Errorf("updating AP advanced config: %w", err)
+	}
+
+	// 4. Services settings — PUT /eaps/{mac}/config/services
+	// (LLDP, L3 access — silently ignored by main PATCH)
+	if err := r.client.UpdateAPServicesConfig(ctx, mac, buildAPServicesConfig(plan)); err != nil {
+		return fmt.Errorf("updating AP services config: %w", err)
+	}
+
+	return nil
+}
+
 func (r *DeviceAPResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan DeviceAPResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -312,96 +513,11 @@ func (r *DeviceAPResource) Create(ctx context.Context, req resource.CreateReques
 
 	mac := plan.MAC.ValueString()
 
-	// Check if we need to update any fields beyond just reading
-	needsUpdate := false
-
-	// Fetch current raw config for PATCH
-	rawConfig, err := r.client.GetAPConfigRaw(ctx, mac)
-	if err != nil {
-		resp.Diagnostics.AddError("Error reading AP config", err.Error())
+	if err := r.applyAPConfig(ctx, mac, &plan); err != nil {
+		resp.Diagnostics.AddError("Error creating AP config", err.Error())
 		return
 	}
 
-	// Apply plan values to raw config where user specified them
-	if !plan.Name.IsNull() && !plan.Name.IsUnknown() {
-		rawConfig["name"] = plan.Name.ValueString()
-		needsUpdate = true
-	}
-	if !plan.WlanID.IsNull() && !plan.WlanID.IsUnknown() {
-		rawConfig["wlanId"] = plan.WlanID.ValueString()
-		needsUpdate = true
-	}
-	if !plan.LEDSetting.IsNull() && !plan.LEDSetting.IsUnknown() {
-		rawConfig["ledSetting"] = plan.LEDSetting.ValueInt64()
-		needsUpdate = true
-	}
-	if !plan.LLDPEnable.IsNull() && !plan.LLDPEnable.IsUnknown() {
-		rawConfig["lldpEnable"] = plan.LLDPEnable.ValueInt64()
-		needsUpdate = true
-	}
-	if !plan.MVlanEnable.IsNull() && !plan.MVlanEnable.IsUnknown() {
-		rawConfig["mvlanEnable"] = plan.MVlanEnable.ValueBool()
-		needsUpdate = true
-	}
-	if !plan.OFDMAEnable2g.IsNull() && !plan.OFDMAEnable2g.IsUnknown() {
-		rawConfig["ofdmaEnable2g"] = plan.OFDMAEnable2g.ValueBool()
-		needsUpdate = true
-	}
-	if !plan.OFDMAEnable5g.IsNull() && !plan.OFDMAEnable5g.IsUnknown() {
-		rawConfig["ofdmaEnable5g"] = plan.OFDMAEnable5g.ValueBool()
-		needsUpdate = true
-	}
-	if !plan.LoopbackDetectEnable.IsNull() && !plan.LoopbackDetectEnable.IsUnknown() {
-		rawConfig["loopbackDetectEnable"] = plan.LoopbackDetectEnable.ValueBool()
-		needsUpdate = true
-	}
-
-	// Apply radio settings
-	applyRadioSettingsToRaw(rawConfig, "radioSetting2g", plan.Radio2gEnable, plan.Radio2gChannelWidth, plan.Radio2gChannel, plan.Radio2gTxPower, plan.Radio2gTxPowerLevel, &needsUpdate)
-	applyRadioSettingsToRaw(rawConfig, "radioSetting5g", plan.Radio5gEnable, plan.Radio5gChannelWidth, plan.Radio5gChannel, plan.Radio5gTxPower, plan.Radio5gTxPowerLevel, &needsUpdate)
-
-	// Apply IP setting
-	if !plan.IPSettingMode.IsNull() && !plan.IPSettingMode.IsUnknown() {
-		if ipSetting, ok := rawConfig["ipSetting"].(map[string]interface{}); ok {
-			ipSetting["mode"] = plan.IPSettingMode.ValueString()
-		} else {
-			rawConfig["ipSetting"] = map[string]interface{}{"mode": plan.IPSettingMode.ValueString()}
-		}
-		needsUpdate = true
-	}
-
-	// Apply management VLAN
-	if !plan.MVlanNetworkID.IsNull() && !plan.MVlanNetworkID.IsUnknown() {
-		rawConfig["mvlanSetting"] = map[string]interface{}{
-			"mode":         1,
-			"lanNetworkId": plan.MVlanNetworkID.ValueString(),
-		}
-		needsUpdate = true
-	}
-
-	// Apply L3 access
-	if !plan.L3AccessEnable.IsNull() && !plan.L3AccessEnable.IsUnknown() {
-		rawConfig["l3AccessSetting"] = map[string]interface{}{"enable": plan.L3AccessEnable.ValueBool()}
-		needsUpdate = true
-	}
-
-	// Apply load balancing
-	applyLBSettingsToRaw(rawConfig, "lbSetting2g", plan.LB2gEnable, plan.LB2gMaxClients, &needsUpdate)
-	applyLBSettingsToRaw(rawConfig, "lbSetting5g", plan.LB5gEnable, plan.LB5gMaxClients, &needsUpdate)
-
-	// Apply RSSI
-	applyRSSISettingsToRaw(rawConfig, "rssiSetting2g", plan.RSSI2gEnable, plan.RSSI2gThreshold, &needsUpdate)
-	applyRSSISettingsToRaw(rawConfig, "rssiSetting5g", plan.RSSI5gEnable, plan.RSSI5gThreshold, &needsUpdate)
-
-	if needsUpdate {
-		_, err = r.client.UpdateAPConfig(ctx, mac, rawConfig)
-		if err != nil {
-			resp.Diagnostics.AddError("Error updating AP config", err.Error())
-			return
-		}
-	}
-
-	// Read back fresh state
 	apConfig, err := r.client.GetAPConfig(ctx, mac)
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading AP config after create", err.Error())
@@ -438,81 +554,11 @@ func (r *DeviceAPResource) Update(ctx context.Context, req resource.UpdateReques
 
 	mac := plan.MAC.ValueString()
 
-	// Fetch full raw config for PATCH
-	rawConfig, err := r.client.GetAPConfigRaw(ctx, mac)
-	if err != nil {
-		resp.Diagnostics.AddError("Error reading AP config for update", err.Error())
-		return
-	}
-
-	// Apply all plan values to raw config
-	if !plan.Name.IsNull() && !plan.Name.IsUnknown() {
-		rawConfig["name"] = plan.Name.ValueString()
-	}
-	if !plan.WlanID.IsNull() && !plan.WlanID.IsUnknown() {
-		rawConfig["wlanId"] = plan.WlanID.ValueString()
-	}
-	if !plan.LEDSetting.IsNull() && !plan.LEDSetting.IsUnknown() {
-		rawConfig["ledSetting"] = plan.LEDSetting.ValueInt64()
-	}
-	if !plan.LLDPEnable.IsNull() && !plan.LLDPEnable.IsUnknown() {
-		rawConfig["lldpEnable"] = plan.LLDPEnable.ValueInt64()
-	}
-	if !plan.MVlanEnable.IsNull() && !plan.MVlanEnable.IsUnknown() {
-		rawConfig["mvlanEnable"] = plan.MVlanEnable.ValueBool()
-	}
-	if !plan.OFDMAEnable2g.IsNull() && !plan.OFDMAEnable2g.IsUnknown() {
-		rawConfig["ofdmaEnable2g"] = plan.OFDMAEnable2g.ValueBool()
-	}
-	if !plan.OFDMAEnable5g.IsNull() && !plan.OFDMAEnable5g.IsUnknown() {
-		rawConfig["ofdmaEnable5g"] = plan.OFDMAEnable5g.ValueBool()
-	}
-	if !plan.LoopbackDetectEnable.IsNull() && !plan.LoopbackDetectEnable.IsUnknown() {
-		rawConfig["loopbackDetectEnable"] = plan.LoopbackDetectEnable.ValueBool()
-	}
-
-	// Apply radio settings
-	dummy := true
-	applyRadioSettingsToRaw(rawConfig, "radioSetting2g", plan.Radio2gEnable, plan.Radio2gChannelWidth, plan.Radio2gChannel, plan.Radio2gTxPower, plan.Radio2gTxPowerLevel, &dummy)
-	applyRadioSettingsToRaw(rawConfig, "radioSetting5g", plan.Radio5gEnable, plan.Radio5gChannelWidth, plan.Radio5gChannel, plan.Radio5gTxPower, plan.Radio5gTxPowerLevel, &dummy)
-
-	// Apply IP setting
-	if !plan.IPSettingMode.IsNull() && !plan.IPSettingMode.IsUnknown() {
-		if ipSetting, ok := rawConfig["ipSetting"].(map[string]interface{}); ok {
-			ipSetting["mode"] = plan.IPSettingMode.ValueString()
-		} else {
-			rawConfig["ipSetting"] = map[string]interface{}{"mode": plan.IPSettingMode.ValueString()}
-		}
-	}
-
-	// Apply management VLAN
-	if !plan.MVlanNetworkID.IsNull() && !plan.MVlanNetworkID.IsUnknown() {
-		rawConfig["mvlanSetting"] = map[string]interface{}{
-			"mode":         1,
-			"lanNetworkId": plan.MVlanNetworkID.ValueString(),
-		}
-	}
-
-	// Apply L3 access
-	if !plan.L3AccessEnable.IsNull() && !plan.L3AccessEnable.IsUnknown() {
-		rawConfig["l3AccessSetting"] = map[string]interface{}{"enable": plan.L3AccessEnable.ValueBool()}
-	}
-
-	// Apply load balancing
-	applyLBSettingsToRaw(rawConfig, "lbSetting2g", plan.LB2gEnable, plan.LB2gMaxClients, &dummy)
-	applyLBSettingsToRaw(rawConfig, "lbSetting5g", plan.LB5gEnable, plan.LB5gMaxClients, &dummy)
-
-	// Apply RSSI
-	applyRSSISettingsToRaw(rawConfig, "rssiSetting2g", plan.RSSI2gEnable, plan.RSSI2gThreshold, &dummy)
-	applyRSSISettingsToRaw(rawConfig, "rssiSetting5g", plan.RSSI5gEnable, plan.RSSI5gThreshold, &dummy)
-
-	_, err = r.client.UpdateAPConfig(ctx, mac, rawConfig)
-	if err != nil {
+	if err := r.applyAPConfig(ctx, mac, &plan); err != nil {
 		resp.Diagnostics.AddError("Error updating AP config", err.Error())
 		return
 	}
 
-	// Read back fresh state
 	apConfig, err := r.client.GetAPConfig(ctx, mac)
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading AP config after update", err.Error())
@@ -578,8 +624,22 @@ func apConfigToState(cfg *client.APConfig, state *DeviceAPResourceModel) {
 	// IP Settings
 	if cfg.IPSetting != nil {
 		state.IPSettingMode = types.StringValue(cfg.IPSetting.Mode)
+		state.IPSettingFallback = types.BoolValue(cfg.IPSetting.Fallback)
+		if cfg.IPSetting.Fallback {
+			state.IPSettingFallbackIP = types.StringValue(cfg.IPSetting.FallbackIP)
+			state.IPSettingFallbackMask = types.StringValue(cfg.IPSetting.FallbackMask)
+			state.IPSettingFallbackGate = types.StringValue(cfg.IPSetting.FallbackGate)
+		} else {
+			state.IPSettingFallbackIP = types.StringNull()
+			state.IPSettingFallbackMask = types.StringNull()
+			state.IPSettingFallbackGate = types.StringNull()
+		}
 	} else {
 		state.IPSettingMode = types.StringValue("dhcp")
+		state.IPSettingFallback = types.BoolValue(false)
+		state.IPSettingFallbackIP = types.StringNull()
+		state.IPSettingFallbackMask = types.StringNull()
+		state.IPSettingFallbackGate = types.StringNull()
 	}
 
 	// LED
@@ -662,83 +722,4 @@ func apConfigToState(cfg *client.APConfig, state *DeviceAPResourceModel) {
 	state.Model = types.StringValue(cfg.Model)
 	state.IP = types.StringValue(cfg.IP)
 	state.FirmwareVersion = types.StringValue(cfg.FirmwareVersion)
-}
-
-// applyRadioSettingsToRaw applies radio settings from plan to raw JSON config.
-func applyRadioSettingsToRaw(raw map[string]interface{}, key string, enable types.Bool, channelWidth types.String, channel types.String, txPower types.Int64, txPowerLevel types.Int64, needsUpdate *bool) {
-	anySet := !enable.IsNull() || !channelWidth.IsNull() || !channel.IsNull() || !txPower.IsNull() || !txPowerLevel.IsNull()
-	if !anySet {
-		return
-	}
-
-	radio, ok := raw[key].(map[string]interface{})
-	if !ok {
-		radio = map[string]interface{}{}
-		raw[key] = radio
-	}
-
-	if !enable.IsNull() && !enable.IsUnknown() {
-		radio["radioEnable"] = enable.ValueBool()
-		*needsUpdate = true
-	}
-	if !channelWidth.IsNull() && !channelWidth.IsUnknown() {
-		radio["channelWidth"] = channelWidth.ValueString()
-		*needsUpdate = true
-	}
-	if !channel.IsNull() && !channel.IsUnknown() {
-		radio["channel"] = channel.ValueString()
-		*needsUpdate = true
-	}
-	if !txPower.IsNull() && !txPower.IsUnknown() {
-		radio["txPower"] = txPower.ValueInt64()
-		*needsUpdate = true
-	}
-	if !txPowerLevel.IsNull() && !txPowerLevel.IsUnknown() {
-		radio["txPowerLevel"] = txPowerLevel.ValueInt64()
-		*needsUpdate = true
-	}
-}
-
-// applyLBSettingsToRaw applies load balancing settings from plan to raw JSON config.
-func applyLBSettingsToRaw(raw map[string]interface{}, key string, enable types.Bool, maxClients types.Int64, needsUpdate *bool) {
-	if enable.IsNull() && maxClients.IsNull() {
-		return
-	}
-
-	lb, ok := raw[key].(map[string]interface{})
-	if !ok {
-		lb = map[string]interface{}{}
-		raw[key] = lb
-	}
-
-	if !enable.IsNull() && !enable.IsUnknown() {
-		lb["lbEnable"] = enable.ValueBool()
-		*needsUpdate = true
-	}
-	if !maxClients.IsNull() && !maxClients.IsUnknown() {
-		lb["maxClients"] = maxClients.ValueInt64()
-		*needsUpdate = true
-	}
-}
-
-// applyRSSISettingsToRaw applies RSSI settings from plan to raw JSON config.
-func applyRSSISettingsToRaw(raw map[string]interface{}, key string, enable types.Bool, threshold types.Int64, needsUpdate *bool) {
-	if enable.IsNull() && threshold.IsNull() {
-		return
-	}
-
-	rssi, ok := raw[key].(map[string]interface{})
-	if !ok {
-		rssi = map[string]interface{}{}
-		raw[key] = rssi
-	}
-
-	if !enable.IsNull() && !enable.IsUnknown() {
-		rssi["rssiEnable"] = enable.ValueBool()
-		*needsUpdate = true
-	}
-	if !threshold.IsNull() && !threshold.IsUnknown() {
-		rssi["threshold"] = threshold.ValueInt64()
-		*needsUpdate = true
-	}
 }
