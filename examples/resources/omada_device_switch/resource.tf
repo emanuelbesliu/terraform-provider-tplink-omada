@@ -20,16 +20,17 @@ resource "omada_device_switch" "example" {
   # Jumbo frames
   jumbo = 1518
 
-  # Port configuration
-  ports {
-    port       = 1
-    name       = "Uplink"
-    profile_id = omada_port_profile.trunk.id
-  }
-
-  ports {
-    port       = 2
-    name       = "AP-Office"
-    profile_id = omada_port_profile.ap_access.id
-  }
+# Port configuration
+  ports = [
+    {
+      port       = 1
+      name       = "Uplink"
+      profile_id = omada_port_profile.trunk.id
+    },
+    {
+      port       = 2
+      name       = "AP-Office"
+      profile_id = omada_port_profile.ap_access.id
+    },
+  ]
 }

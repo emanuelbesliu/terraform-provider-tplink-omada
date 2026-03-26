@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
@@ -52,6 +53,7 @@ type DeviceSwitchResourceModel struct {
 	IPSettingFallback     types.Bool   `tfsdk:"ip_setting_fallback"`
 	IPSettingFallbackIP   types.String `tfsdk:"ip_setting_fallback_ip"`
 	IPSettingFallbackMask types.String `tfsdk:"ip_setting_fallback_mask"`
+	IPSettingFallbackGate types.String `tfsdk:"ip_setting_fallback_gate"`
 	LoopbackDetectEnable  types.Bool   `tfsdk:"loopback_detect_enable"`
 
 	// STP
@@ -212,55 +214,52 @@ func (r *DeviceSwitchResource) Schema(_ context.Context, _ resource.SchemaReques
 				Optional:    true,
 				Computed:    true,
 			},
-
+			"ip_setting_fallback_gate": schema.StringAttribute{
+				Description: "Fallback gateway IP address.",
+				Optional:    true,
+				Computed:    true,
+			},
 			"loopback_detect_enable": schema.BoolAttribute{
 				Description: "Enable loopback detection.",
 				Optional:    true,
 				Computed:    true,
 			},
-
-			// STP
+			// STP — Optional+Computed with no defaults so unsupported switches
+			// don't drift. Only set these if your switch model supports STP.
 			"stp": schema.Int64Attribute{
-				Description: "STP mode: 2=Follow site setting.",
+				Description: "STP mode: 0=disabled, 1=STP, 2=RSTP. Not supported on all models.",
 				Optional:    true,
 				Computed:    true,
-				Default:     int64default.StaticInt64(2),
 			},
 			"stp_priority": schema.Int64Attribute{
-				Description: "STP bridge priority (default 32768).",
+				Description: "STP bridge priority. Not supported on all models.",
 				Optional:    true,
 				Computed:    true,
-				Default:     int64default.StaticInt64(32768),
 			},
 			"stp_hello_time": schema.Int64Attribute{
-				Description: "STP hello time in seconds (default 2).",
+				Description: "STP hello time in seconds. Not supported on all models.",
 				Optional:    true,
 				Computed:    true,
-				Default:     int64default.StaticInt64(2),
 			},
 			"stp_max_age": schema.Int64Attribute{
-				Description: "STP max age in seconds (default 20).",
+				Description: "STP max age in seconds. Not supported on all models.",
 				Optional:    true,
 				Computed:    true,
-				Default:     int64default.StaticInt64(20),
 			},
 			"stp_forward_delay": schema.Int64Attribute{
-				Description: "STP forward delay in seconds (default 15).",
+				Description: "STP forward delay in seconds. Not supported on all models.",
 				Optional:    true,
 				Computed:    true,
-				Default:     int64default.StaticInt64(15),
 			},
 			"stp_tx_hold_count": schema.Int64Attribute{
-				Description: "STP TX hold count (default 5).",
+				Description: "STP TX hold count. Not supported on all models.",
 				Optional:    true,
 				Computed:    true,
-				Default:     int64default.StaticInt64(5),
 			},
 			"stp_max_hops": schema.Int64Attribute{
-				Description: "STP max hops (default 20).",
+				Description: "STP max hops. Not supported on all models.",
 				Optional:    true,
 				Computed:    true,
-				Default:     int64default.StaticInt64(20),
 			},
 
 			// SNMP
@@ -275,18 +274,16 @@ func (r *DeviceSwitchResource) Schema(_ context.Context, _ resource.SchemaReques
 				Computed:    true,
 			},
 
-			// Misc
+			// Jumbo and LAG — Optional+Computed with no defaults.
 			"jumbo": schema.Int64Attribute{
-				Description: "Jumbo frame size (default 1518).",
+				Description: "Jumbo frame size in bytes. Not supported on all models.",
 				Optional:    true,
 				Computed:    true,
-				Default:     int64default.StaticInt64(1518),
 			},
 			"lag_hash_alg": schema.Int64Attribute{
-				Description: "LAG hash algorithm.",
+				Description: "LAG hash algorithm. Not supported on all models.",
 				Optional:    true,
 				Computed:    true,
-				Default:     int64default.StaticInt64(2),
 			},
 
 			// Ports
@@ -299,7 +296,7 @@ func (r *DeviceSwitchResource) Schema(_ context.Context, _ resource.SchemaReques
 
 			// Read-only
 			"model": schema.StringAttribute{
-				Description: "The switch model (e.g., 'TL-SG3428MP'). Read-only.",
+				Description: "The switch model. Read-only.",
 				Computed:    true,
 			},
 			"ip": schema.StringAttribute{
@@ -329,6 +326,119 @@ func (r *DeviceSwitchResource) Configure(_ context.Context, req resource.Configu
 	r.client = c
 }
 
+func applyGeneralSwitchConfig(raw map[string]interface{}, plan *DeviceSwitchResourceModel) {
+	if !plan.Name.IsNull() && !plan.Name.IsUnknown() {
+		raw["name"] = plan.Name.ValueString()
+	}
+	if !plan.LEDSetting.IsNull() && !plan.LEDSetting.IsUnknown() {
+		raw["ledSetting"] = plan.LEDSetting.ValueInt64()
+	}
+	if !plan.MVlanNetworkID.IsNull() && !plan.MVlanNetworkID.IsUnknown() {
+		raw["mvlanNetworkId"] = plan.MVlanNetworkID.ValueString()
+	}
+	if !plan.IPSettingMode.IsNull() && !plan.IPSettingMode.IsUnknown() {
+		ipSetting, ok := raw["ipSetting"].(map[string]interface{})
+		if !ok {
+			ipSetting = map[string]interface{}{}
+			raw["ipSetting"] = ipSetting
+		}
+		ipSetting["mode"] = plan.IPSettingMode.ValueString()
+		fallback := !plan.IPSettingFallback.IsNull() && !plan.IPSettingFallback.IsUnknown() && plan.IPSettingFallback.ValueBool()
+		ipSetting["fallback"] = fallback
+		// Only include fallback IP fields when fallback is enabled.
+		// The Omada API rejects empty strings for these IP fields.
+		if fallback {
+			if !plan.IPSettingFallbackIP.IsNull() && !plan.IPSettingFallbackIP.IsUnknown() {
+				ipSetting["fallbackIp"] = plan.IPSettingFallbackIP.ValueString()
+			}
+			if !plan.IPSettingFallbackMask.IsNull() && !plan.IPSettingFallbackMask.IsUnknown() {
+				ipSetting["fallbackMask"] = plan.IPSettingFallbackMask.ValueString()
+			}
+			if !plan.IPSettingFallbackGate.IsNull() && !plan.IPSettingFallbackGate.IsUnknown() {
+				ipSetting["fallbackGate"] = plan.IPSettingFallbackGate.ValueString()
+			}
+		}
+	}
+	if !plan.Priority.IsNull() && !plan.Priority.IsUnknown() {
+		raw["priority"] = plan.Priority.ValueInt64()
+	}
+	if !plan.HelloTime.IsNull() && !plan.HelloTime.IsUnknown() {
+		raw["helloTime"] = plan.HelloTime.ValueInt64()
+	}
+	if !plan.MaxAge.IsNull() && !plan.MaxAge.IsUnknown() {
+		raw["maxAge"] = plan.MaxAge.ValueInt64()
+	}
+	if !plan.ForwardDelay.IsNull() && !plan.ForwardDelay.IsUnknown() {
+		raw["forwardDelay"] = plan.ForwardDelay.ValueInt64()
+	}
+	if !plan.TxHoldCount.IsNull() && !plan.TxHoldCount.IsUnknown() {
+		raw["txHoldCount"] = plan.TxHoldCount.ValueInt64()
+	}
+	if !plan.MaxHops.IsNull() && !plan.MaxHops.IsUnknown() {
+		raw["maxHops"] = plan.MaxHops.ValueInt64()
+	}
+	if !plan.SNMPLocation.IsNull() && !plan.SNMPLocation.IsUnknown() {
+		snmp, ok := raw["snmp"].(map[string]interface{})
+		if !ok {
+			snmp = map[string]interface{}{}
+			raw["snmp"] = snmp
+		}
+		snmp["location"] = plan.SNMPLocation.ValueString()
+		if !plan.SNMPContact.IsNull() && !plan.SNMPContact.IsUnknown() {
+			snmp["contact"] = plan.SNMPContact.ValueString()
+		}
+	}
+	if !plan.Jumbo.IsNull() && !plan.Jumbo.IsUnknown() {
+		raw["jumbo"] = plan.Jumbo.ValueInt64()
+	}
+	if !plan.LagHashAlg.IsNull() && !plan.LagHashAlg.IsUnknown() {
+		raw["lagHashAlg"] = plan.LagHashAlg.ValueInt64()
+	}
+
+	// loopbackDetectEnable and stp are handled by UpdateSwitchServiceConfig
+	// via PUT /config/service — the general config endpoint silently ignores them
+}
+
+func buildSwitchServiceConfig(plan *DeviceSwitchResourceModel) *client.SwitchServiceConfig {
+	config := &client.SwitchServiceConfig{}
+	if !plan.LoopbackDetectEnable.IsNull() && !plan.LoopbackDetectEnable.IsUnknown() {
+		config.LoopbackDetectEnable = plan.LoopbackDetectEnable.ValueBool()
+	}
+	if !plan.STP.IsNull() && !plan.STP.IsUnknown() {
+		v := int(plan.STP.ValueInt64())
+		config.STP = &v
+	}
+	return config
+}
+
+func updateSwitchPorts(ctx context.Context, c *client.Client, mac string, plan *DeviceSwitchResourceModel, diags *diag.Diagnostics) {
+	if plan.Ports.IsNull() || plan.Ports.IsUnknown() {
+		return
+	}
+	var ports []SwitchPortModel
+	diags.Append(plan.Ports.ElementsAs(ctx, &ports, false)...)
+	if diags.HasError() {
+		return
+	}
+	for _, p := range ports {
+		portConfig := map[string]interface{}{
+			"name":                  p.Name.ValueString(),
+			"profileId":             p.ProfileID.ValueString(),
+			"profileOverrideEnable": p.ProfileOverrideEnable.ValueBool(),
+			"networkTagsSetting":    p.NetworkTagsSetting.ValueInt64(),
+			"tagNetworkIds":         []string{},
+			"untagNetworkIds":       []string{},
+		}
+		if err := c.UpdateSwitchPort(ctx, mac, int(p.Port.ValueInt64()), portConfig); err != nil {
+			diags.AddError(
+				fmt.Sprintf("Error updating switch port %d", p.Port.ValueInt64()),
+				err.Error(),
+			)
+			return
+		}
+	}
+}
+
 func (r *DeviceSwitchResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan DeviceSwitchResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -345,15 +455,25 @@ func (r *DeviceSwitchResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 
-	needsUpdate := false
-	applySwitchPlanToRaw(rawConfig, &plan, &needsUpdate)
+	// Read isES before UpdateSwitchConfig strips it
+	isES, _ := rawConfig["es"].(bool)
 
-	if needsUpdate {
-		_, err = r.client.UpdateSwitchConfig(ctx, mac, rawConfig)
-		if err != nil {
-			resp.Diagnostics.AddError("Error updating switch config", err.Error())
-			return
-		}
+	applyGeneralSwitchConfig(rawConfig, &plan)
+
+	_, err = r.client.UpdateSwitchConfig(ctx, mac, rawConfig)
+	if err != nil {
+		resp.Diagnostics.AddError("Error updating switch config", err.Error())
+		return
+	}
+
+	if err := r.client.UpdateSwitchServiceConfig(ctx, mac, isES, buildSwitchServiceConfig(&plan)); err != nil {
+		resp.Diagnostics.AddError("Error updating switch service config", err.Error())
+		return
+	}
+
+	updateSwitchPorts(ctx, r.client, mac, &plan, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
 	}
 
 	// Read back fresh state
@@ -395,16 +515,28 @@ func (r *DeviceSwitchResource) Update(ctx context.Context, req resource.UpdateRe
 
 	rawConfig, err := r.client.GetSwitchConfigRaw(ctx, mac)
 	if err != nil {
-		resp.Diagnostics.AddError("Error reading switch config for update", err.Error())
+		resp.Diagnostics.AddError("Error reading switch config", err.Error())
 		return
 	}
 
-	dummy := true
-	applySwitchPlanToRaw(rawConfig, &plan, &dummy)
+	// Read isES before UpdateSwitchConfig strips it
+	isES, _ := rawConfig["es"].(bool)
+
+	applyGeneralSwitchConfig(rawConfig, &plan)
 
 	_, err = r.client.UpdateSwitchConfig(ctx, mac, rawConfig)
 	if err != nil {
 		resp.Diagnostics.AddError("Error updating switch config", err.Error())
+		return
+	}
+
+	if err := r.client.UpdateSwitchServiceConfig(ctx, mac, isES, buildSwitchServiceConfig(&plan)); err != nil {
+		resp.Diagnostics.AddError("Error updating switch service config", err.Error())
+		return
+	}
+
+	updateSwitchPorts(ctx, r.client, mac, &plan, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
 		return
 	}
 
@@ -450,18 +582,26 @@ func switchConfigToState(cfg *client.SwitchConfig, state *DeviceSwitchResourceMo
 	if cfg.IPSetting != nil {
 		state.IPSettingMode = types.StringValue(cfg.IPSetting.Mode)
 		state.IPSettingFallback = types.BoolValue(cfg.IPSetting.Fallback)
-		state.IPSettingFallbackIP = types.StringValue(cfg.IPSetting.FallbackIP)
-		state.IPSettingFallbackMask = types.StringValue(cfg.IPSetting.FallbackMask)
+		if cfg.IPSetting.Fallback {
+			state.IPSettingFallbackIP = types.StringValue(cfg.IPSetting.FallbackIP)
+			state.IPSettingFallbackMask = types.StringValue(cfg.IPSetting.FallbackMask)
+			state.IPSettingFallbackGate = types.StringValue(cfg.IPSetting.FallbackGate)
+		} else {
+			state.IPSettingFallbackIP = types.StringNull()
+			state.IPSettingFallbackMask = types.StringNull()
+			state.IPSettingFallbackGate = types.StringNull()
+		}
 	} else {
 		state.IPSettingMode = types.StringValue("dhcp")
 		state.IPSettingFallback = types.BoolValue(false)
-		state.IPSettingFallbackIP = types.StringValue("")
-		state.IPSettingFallbackMask = types.StringValue("")
+		state.IPSettingFallbackIP = types.StringNull()
+		state.IPSettingFallbackMask = types.StringNull()
+		state.IPSettingFallbackGate = types.StringNull()
 	}
 
 	state.LoopbackDetectEnable = types.BoolValue(cfg.LoopbackDetectEnable)
 
-	// STP
+	// STP — use Int64Null for zero values since zero means unsupported on some models
 	state.STP = types.Int64Value(int64(cfg.STP))
 	state.Priority = types.Int64Value(int64(cfg.Priority))
 	state.HelloTime = types.Int64Value(int64(cfg.HelloTime))
@@ -494,7 +634,6 @@ func switchConfigToState(cfg *client.SwitchConfig, state *DeviceSwitchResourceMo
 		for j, id := range p.UntagNetworkIDs {
 			untagIDs[j] = types.StringValue(id)
 		}
-
 		tagList, _ := types.ListValue(types.StringType, tagIDs)
 		untagList, _ := types.ListValue(types.StringType, untagIDs)
 
@@ -556,99 +695,4 @@ func switchConfigToState(cfg *client.SwitchConfig, state *DeviceSwitchResourceMo
 	state.Model = types.StringValue(cfg.Model)
 	state.IP = types.StringValue(cfg.IP)
 	state.FirmwareVersion = types.StringValue(cfg.FirmwareVersion)
-}
-
-// applySwitchPlanToRaw applies Terraform plan values to a raw JSON switch config.
-func applySwitchPlanToRaw(raw map[string]interface{}, plan *DeviceSwitchResourceModel, needsUpdate *bool) {
-	if !plan.Name.IsNull() && !plan.Name.IsUnknown() {
-		raw["name"] = plan.Name.ValueString()
-		*needsUpdate = true
-	}
-	if !plan.LEDSetting.IsNull() && !plan.LEDSetting.IsUnknown() {
-		raw["ledSetting"] = plan.LEDSetting.ValueInt64()
-		*needsUpdate = true
-	}
-	if !plan.MVlanNetworkID.IsNull() && !plan.MVlanNetworkID.IsUnknown() {
-		raw["mvlanNetworkId"] = plan.MVlanNetworkID.ValueString()
-		*needsUpdate = true
-	}
-
-	// IP Settings
-	if !plan.IPSettingMode.IsNull() && !plan.IPSettingMode.IsUnknown() {
-		ipSetting, ok := raw["ipSetting"].(map[string]interface{})
-		if !ok {
-			ipSetting = map[string]interface{}{}
-			raw["ipSetting"] = ipSetting
-		}
-		ipSetting["mode"] = plan.IPSettingMode.ValueString()
-		if !plan.IPSettingFallback.IsNull() && !plan.IPSettingFallback.IsUnknown() {
-			ipSetting["fallback"] = plan.IPSettingFallback.ValueBool()
-		}
-		if !plan.IPSettingFallbackIP.IsNull() && !plan.IPSettingFallbackIP.IsUnknown() {
-			ipSetting["fallbackIp"] = plan.IPSettingFallbackIP.ValueString()
-		}
-		if !plan.IPSettingFallbackMask.IsNull() && !plan.IPSettingFallbackMask.IsUnknown() {
-			ipSetting["fallbackMask"] = plan.IPSettingFallbackMask.ValueString()
-		}
-		*needsUpdate = true
-	}
-
-	if !plan.LoopbackDetectEnable.IsNull() && !plan.LoopbackDetectEnable.IsUnknown() {
-		raw["loopbackDetectEnable"] = plan.LoopbackDetectEnable.ValueBool()
-		*needsUpdate = true
-	}
-
-	// STP
-	if !plan.STP.IsNull() && !plan.STP.IsUnknown() {
-		raw["stp"] = plan.STP.ValueInt64()
-		*needsUpdate = true
-	}
-	if !plan.Priority.IsNull() && !plan.Priority.IsUnknown() {
-		raw["priority"] = plan.Priority.ValueInt64()
-		*needsUpdate = true
-	}
-	if !plan.HelloTime.IsNull() && !plan.HelloTime.IsUnknown() {
-		raw["helloTime"] = plan.HelloTime.ValueInt64()
-		*needsUpdate = true
-	}
-	if !plan.MaxAge.IsNull() && !plan.MaxAge.IsUnknown() {
-		raw["maxAge"] = plan.MaxAge.ValueInt64()
-		*needsUpdate = true
-	}
-	if !plan.ForwardDelay.IsNull() && !plan.ForwardDelay.IsUnknown() {
-		raw["forwardDelay"] = plan.ForwardDelay.ValueInt64()
-		*needsUpdate = true
-	}
-	if !plan.TxHoldCount.IsNull() && !plan.TxHoldCount.IsUnknown() {
-		raw["txHoldCount"] = plan.TxHoldCount.ValueInt64()
-		*needsUpdate = true
-	}
-	if !plan.MaxHops.IsNull() && !plan.MaxHops.IsUnknown() {
-		raw["maxHops"] = plan.MaxHops.ValueInt64()
-		*needsUpdate = true
-	}
-
-	// SNMP
-	if !plan.SNMPLocation.IsNull() && !plan.SNMPLocation.IsUnknown() {
-		snmp, ok := raw["snmp"].(map[string]interface{})
-		if !ok {
-			snmp = map[string]interface{}{}
-			raw["snmp"] = snmp
-		}
-		snmp["location"] = plan.SNMPLocation.ValueString()
-		if !plan.SNMPContact.IsNull() && !plan.SNMPContact.IsUnknown() {
-			snmp["contact"] = plan.SNMPContact.ValueString()
-		}
-		*needsUpdate = true
-	}
-
-	// Misc
-	if !plan.Jumbo.IsNull() && !plan.Jumbo.IsUnknown() {
-		raw["jumbo"] = plan.Jumbo.ValueInt64()
-		*needsUpdate = true
-	}
-	if !plan.LagHashAlg.IsNull() && !plan.LagHashAlg.IsUnknown() {
-		raw["lagHashAlg"] = plan.LagHashAlg.ValueInt64()
-		*needsUpdate = true
-	}
 }
