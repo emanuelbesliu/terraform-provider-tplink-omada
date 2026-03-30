@@ -38,7 +38,10 @@ jobs:
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
-          version: "~> v2"
+          # Pin to v2.14.x — v2.15.0 has a regression where the .sig file hash
+          # is appended to SHA256SUMS after GPG signing, invalidating the signature.
+          # See: https://github.com/goreleaser/goreleaser/releases/tag/v2.15.0
+          version: "~> v2.14"
           args: release --clean
         env:
           GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
