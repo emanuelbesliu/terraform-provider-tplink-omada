@@ -13,7 +13,7 @@ var version = "dev"
 
 func main() {
 	err := providerserver.Serve(context.Background(), provider.New, providerserver.ServeOpts{
-		Address: "registry.terraform.io/tplink/omada",
+		Address: "registry.terraform.io/emanuelbesliu/tplink-omada",
 	})
 	if err != nil {
 		log.Fatal(err)

@@ -1,7 +1,7 @@
 terraform {
   required_providers {
     omada = {
-      source = "tplink/omada"
+      source = "emanuelbesliu/tplink-omada"
     }
   }
 }

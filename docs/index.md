@@ -33,7 +33,7 @@ The `site` attribute is optional. When set, all site-scoped operations (networks
 terraform {
   required_providers {
     omada = {
-      source = "tplink/omada"
+      source = "emanuelbesliu/tplink-omada"
     }
   }
 }
