@@ -2,14 +2,19 @@
 page_title: "omada Provider"
 subcategory: ""
 description: |-
-  Terraform provider for managing TP-Link Omada Software Controller 6.x resources.
+  Terraform provider for managing TP-Link Omada Controller resources.
 ---
 
 # omada Provider
 
-The Omada provider enables Terraform to manage resources on a [TP-Link Omada Software Controller](https://www.tp-link.com/us/omada-sdn/) running version 6.x.
+The Omada provider enables Terraform to manage resources on a [TP-Link Omada Controller](https://www.tp-link.com/us/omada-sdn/).
 
-It supports managing sites, networks (VLANs), wireless networks (SSIDs), WLAN groups, switch port profiles, and device configurations for APs and managed switches.
+An Omada controller manages multiple **sites**, each with its own networks, wireless SSIDs, port profiles, devices, and settings. The provider represents a connection to the controller; individual resources specify which site they belong to via the `site_id` attribute.
+
+Resources fall into two categories:
+
+- **Virtual resources** (networks, SSIDs, port profiles, WLAN groups, site settings) — created and destroyed through Terraform with a required `site_id` attribute.
+- **Physical resources** (APs, switches) — represent hardware devices adopted through the controller UI. These are import-only: use `terraform import` to bring them into state. Their `site_id` and `id` (MAC address) are set by import and cannot be changed in configuration.
 
 ## Authentication
 
@@ -20,12 +25,7 @@ The provider requires the URL, username, and password for your Omada Controller.
 | `url` | `OMADA_URL` |
 | `username` | `OMADA_USERNAME` |
 | `password` | `OMADA_PASSWORD` |
-| `site` | `OMADA_SITE` |
 | `skip_tls_verify` | `OMADA_SKIP_TLS_VERIFY` |
-
-## Site Configuration
-
-The `site` attribute is optional. When set, all site-scoped operations (networks, SSIDs, devices, etc.) use that site. When omitted, global operations like listing sites still work, and site-scoped operations will use the "Default" site.
 
 ## Example Usage
 
@@ -38,19 +38,32 @@ terraform {
   }
 }
 
-# Configuration can also be set via environment variables:
-#   OMADA_URL, OMADA_USERNAME, OMADA_PASSWORD, OMADA_SITE
 provider "omada" {
   url             = "https://192.168.1.1:8043"
   username        = "admin"
   password        = var.omada_password
-  site            = "Default"
   skip_tls_verify = true
 }
 
 variable "omada_password" {
   type      = string
   sensitive = true
+}
+
+# Create a site, then manage resources within it
+resource "omada_site" "home" {
+  name      = "Home"
+  region    = "United States"
+  time_zone = "America/New_York"
+  scenario  = "Home"
+}
+
+resource "omada_network" "iot" {
+  site_id        = omada_site.home.id
+  name           = "IoT"
+  purpose        = "vlan"
+  vlan_id        = 30
+  gateway_subnet = "192.168.30.1/24"
 }
 ```
 
@@ -60,7 +73,6 @@ variable "omada_password" {
 ### Optional
 
 - `password` (String, Sensitive) The password for the Omada Controller. Can also be set via OMADA_PASSWORD environment variable.
-- `site` (String) The site name or ID to manage. Defaults to 'Default'. Can also be set via OMADA_SITE environment variable.
 - `skip_tls_verify` (Boolean) Skip TLS certificate verification. Defaults to true since Omada controllers typically use self-signed certificates. Can also be set via OMADA_SKIP_TLS_VERIFY environment variable.
 - `url` (String) The base URL of the Omada Controller (e.g., https://192.168.1.1:8043). Can also be set via OMADA_URL environment variable.
 - `username` (String) The username for the Omada Controller. Can also be set via OMADA_USERNAME environment variable.

@@ -1,4 +1,5 @@
 resource "omada_wireless_network" "example" {
+  site_id       = omada_site.example.id
   name          = "HomeWiFi"
   wlan_group_id = omada_wlan_group.default.id
   band          = 3 # Both 2.4GHz and 5GHz

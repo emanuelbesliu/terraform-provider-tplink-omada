@@ -23,6 +23,7 @@ type WlanGroupResource struct {
 // WlanGroupResourceModel maps the resource schema to Go types.
 type WlanGroupResourceModel struct {
 	ID      types.String `tfsdk:"id"`
+	SiteID  types.String `tfsdk:"site_id"`
 	Name    types.String `tfsdk:"name"`
 	Primary types.Bool   `tfsdk:"primary"`
 }
@@ -46,6 +47,7 @@ func (r *WlanGroupResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"site_id": siteIDResourceSchema(),
 			"name": schema.StringAttribute{
 				Description: "The name of the WLAN group.",
 				Required:    true,
@@ -80,13 +82,14 @@ func (r *WlanGroupResource) Create(ctx context.Context, req resource.CreateReque
 		return
 	}
 
+	siteID := plan.SiteID.ValueString()
 	name := plan.Name.ValueString()
 
 	// The Omada controller auto-creates a "Default" WLAN group when a site is
 	// created.  Check whether a group with the requested name already exists
 	// and adopt it instead of trying to create a duplicate (which would fail
 	// with error -33200).
-	groups, err := r.client.ListWlanGroups(ctx)
+	groups, err := r.client.ListWlanGroups(ctx, siteID)
 	if err != nil {
 		resp.Diagnostics.AddError("Error listing WLAN groups", err.Error())
 		return
@@ -110,14 +113,14 @@ func (r *WlanGroupResource) Create(ctx context.Context, req resource.CreateReque
 	}
 
 	// No existing group — create a new one.
-	wlanID, err := r.client.CreateWlanGroup(ctx, name, false)
+	wlanID, err := r.client.CreateWlanGroup(ctx, siteID, name, false)
 	if err != nil {
 		resp.Diagnostics.AddError("Error creating WLAN group", err.Error())
 		return
 	}
 
 	// Read back to get full state
-	group, err := r.client.GetWlanGroup(ctx, wlanID)
+	group, err := r.client.GetWlanGroup(ctx, siteID, wlanID)
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading created WLAN group", err.Error())
 		return
@@ -137,7 +140,7 @@ func (r *WlanGroupResource) Read(ctx context.Context, req resource.ReadRequest, 
 		return
 	}
 
-	group, err := r.client.GetWlanGroup(ctx, state.ID.ValueString())
+	group, err := r.client.GetWlanGroup(ctx, state.SiteID.ValueString(), state.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading WLAN group", err.Error())
 		return
@@ -162,19 +165,22 @@ func (r *WlanGroupResource) Update(ctx context.Context, req resource.UpdateReque
 		return
 	}
 
-	if err := r.client.UpdateWlanGroup(ctx, state.ID.ValueString(), plan.Name.ValueString()); err != nil {
+	siteID := state.SiteID.ValueString()
+
+	if err := r.client.UpdateWlanGroup(ctx, siteID, state.ID.ValueString(), plan.Name.ValueString()); err != nil {
 		resp.Diagnostics.AddError("Error updating WLAN group", err.Error())
 		return
 	}
 
 	// Read back to confirm
-	group, err := r.client.GetWlanGroup(ctx, state.ID.ValueString())
+	group, err := r.client.GetWlanGroup(ctx, siteID, state.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading updated WLAN group", err.Error())
 		return
 	}
 
 	plan.ID = state.ID
+	plan.SiteID = state.SiteID
 	plan.Name = types.StringValue(group.Name)
 	plan.Primary = types.BoolValue(group.Primary)
 
@@ -188,14 +194,23 @@ func (r *WlanGroupResource) Delete(ctx context.Context, req resource.DeleteReque
 		return
 	}
 
-	if err := r.client.DeleteWlanGroup(ctx, state.ID.ValueString()); err != nil {
+	if err := r.client.DeleteWlanGroup(ctx, state.SiteID.ValueString(), state.ID.ValueString()); err != nil {
 		resp.Diagnostics.AddError("Error deleting WLAN group", err.Error())
 		return
 	}
 }
 
 func (r *WlanGroupResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	group, err := r.client.GetWlanGroup(ctx, req.ID)
+	siteID, wlanGroupID, ok := parseImportID(req.ID)
+	if !ok {
+		resp.Diagnostics.AddError(
+			"Invalid import ID",
+			"Import ID must be in the format 'siteID/wlanGroupID'.",
+		)
+		return
+	}
+
+	group, err := r.client.GetWlanGroup(ctx, siteID, wlanGroupID)
 	if err != nil {
 		resp.Diagnostics.AddError("Error importing WLAN group", err.Error())
 		return
@@ -203,6 +218,7 @@ func (r *WlanGroupResource) ImportState(ctx context.Context, req resource.Import
 
 	state := WlanGroupResourceModel{
 		ID:      types.StringValue(group.ID),
+		SiteID:  types.StringValue(siteID),
 		Name:    types.StringValue(group.Name),
 		Primary: types.BoolValue(group.Primary),
 	}

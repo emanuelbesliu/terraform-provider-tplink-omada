@@ -1,3 +1,4 @@
 resource "omada_wlan_group" "example" {
-  name = "Office-WLANs"
+  site_id = omada_site.example.id
+  name    = "Office-WLANs"
 }

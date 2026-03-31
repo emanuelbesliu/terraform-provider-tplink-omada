@@ -23,7 +23,6 @@ type OmadaProviderModel struct {
 	URL           types.String `tfsdk:"url"`
 	Username      types.String `tfsdk:"username"`
 	Password      types.String `tfsdk:"password"`
-	Site          types.String `tfsdk:"site"`
 	SkipTLSVerify types.Bool   `tfsdk:"skip_tls_verify"`
 }
 
@@ -38,8 +37,10 @@ func (p *OmadaProvider) Metadata(_ context.Context, _ provider.MetadataRequest, 
 
 func (p *OmadaProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Terraform provider for TP-Link Omada Software Controller 6.x. " +
-			"Manages networks, wireless SSIDs, port profiles, firewall rules, static routes, and DHCP reservations.",
+		Description: "Terraform provider for TP-Link Omada Controller. " +
+			"Manages sites, networks, wireless SSIDs, port profiles, and device configuration. " +
+			"The provider represents a connection to the controller; " +
+			"individual resources specify which site they belong to via the site_id attribute.",
 		Attributes: map[string]schema.Attribute{
 			"url": schema.StringAttribute{
 				Description: "The base URL of the Omada Controller (e.g., https://192.168.1.1:8043). " +
@@ -56,11 +57,6 @@ func (p *OmadaProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp
 					"Can also be set via OMADA_PASSWORD environment variable.",
 				Optional:  true,
 				Sensitive: true,
-			},
-			"site": schema.StringAttribute{
-				Description: "The site name or ID to manage. Defaults to 'Default'. " +
-					"Can also be set via OMADA_SITE environment variable.",
-				Optional: true,
 			},
 			"skip_tls_verify": schema.BoolAttribute{
 				Description: "Skip TLS certificate verification. Defaults to true since Omada " +
@@ -83,9 +79,6 @@ func (p *OmadaProvider) Configure(ctx context.Context, req provider.ConfigureReq
 	url := stringValueOrEnv(config.URL, "OMADA_URL")
 	username := stringValueOrEnv(config.Username, "OMADA_USERNAME")
 	password := stringValueOrEnv(config.Password, "OMADA_PASSWORD")
-	site := stringValueOrEnv(config.Site, "OMADA_SITE")
-	// Site is optional — if not set, the client will defer site resolution
-	// until a site-scoped operation is performed.
 
 	skipTLSVerify := true
 	if !config.SkipTLSVerify.IsNull() && !config.SkipTLSVerify.IsUnknown() {
@@ -116,7 +109,7 @@ func (p *OmadaProvider) Configure(ctx context.Context, req provider.ConfigureReq
 		return
 	}
 
-	c, err := client.NewClient(url, username, password, site, skipTLSVerify)
+	c, err := client.NewClient(url, username, password, skipTLSVerify)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Unable to Connect to Omada Controller",

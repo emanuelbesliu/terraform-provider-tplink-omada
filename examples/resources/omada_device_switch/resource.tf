@@ -1,8 +1,8 @@
-# Switches cannot be created or deleted via the API. This resource manages
-# the configuration of an already-adopted switch. Destroying the resource
-# removes it from Terraform state only.
+# Switches are physical devices adopted through the controller UI.
+# Import an adopted switch into Terraform state:
+#   terraform import omada_device_switch.example <siteID>/<mac>
+# Destroying the resource removes it from Terraform state only.
 resource "omada_device_switch" "example" {
-  mac  = "10-27-F5-AA-BB-CC"
   name = "Core-Switch"
 
   led_setting                = 2 # Site settings

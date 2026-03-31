@@ -23,6 +23,7 @@ type PortProfileResource struct {
 
 type PortProfileResourceModel struct {
 	ID                   types.String `tfsdk:"id"`
+	SiteID               types.String `tfsdk:"site_id"`
 	Name                 types.String `tfsdk:"name"`
 	NativeNetworkID      types.String `tfsdk:"native_network_id"`
 	TagNetworkIDs        types.List   `tfsdk:"tag_network_ids"`
@@ -54,6 +55,7 @@ func (r *PortProfileResource) Schema(_ context.Context, _ resource.SchemaRequest
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"site_id": siteIDResourceSchema(),
 			"name": schema.StringAttribute{
 				Description: "The name of the port profile.",
 				Required:    true,
@@ -135,6 +137,8 @@ func (r *PortProfileResource) Create(ctx context.Context, req resource.CreateReq
 		return
 	}
 
+	siteID := plan.SiteID.ValueString()
+
 	profile := &client.PortProfile{
 		Name:                 plan.Name.ValueString(),
 		NativeNetworkID:      plan.NativeNetworkID.ValueString(),
@@ -161,7 +165,7 @@ func (r *PortProfileResource) Create(ctx context.Context, req resource.CreateReq
 		profile.TagNetworkIDs = tagIDs
 	}
 
-	created, err := r.client.CreatePortProfile(ctx, profile)
+	created, err := r.client.CreatePortProfile(ctx, siteID, profile)
 	if err != nil {
 		resp.Diagnostics.AddError("Error creating port profile", err.Error())
 		return
@@ -178,7 +182,9 @@ func (r *PortProfileResource) Read(ctx context.Context, req resource.ReadRequest
 		return
 	}
 
-	profile, err := r.client.GetPortProfile(ctx, state.ID.ValueString())
+	siteID := state.SiteID.ValueString()
+
+	profile, err := r.client.GetPortProfile(ctx, siteID, state.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading port profile", err.Error())
 		return
@@ -214,6 +220,8 @@ func (r *PortProfileResource) Update(ctx context.Context, req resource.UpdateReq
 		return
 	}
 
+	siteID := state.SiteID.ValueString()
+
 	profile := &client.PortProfile{
 		Name:                 plan.Name.ValueString(),
 		NativeNetworkID:      plan.NativeNetworkID.ValueString(),
@@ -240,13 +248,14 @@ func (r *PortProfileResource) Update(ctx context.Context, req resource.UpdateReq
 		profile.TagNetworkIDs = tagIDs
 	}
 
-	_, err := r.client.UpdatePortProfile(ctx, state.ID.ValueString(), profile)
+	_, err := r.client.UpdatePortProfile(ctx, siteID, state.ID.ValueString(), profile)
 	if err != nil {
 		resp.Diagnostics.AddError("Error updating port profile", err.Error())
 		return
 	}
 
 	plan.ID = state.ID
+	plan.SiteID = state.SiteID
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -257,7 +266,7 @@ func (r *PortProfileResource) Delete(ctx context.Context, req resource.DeleteReq
 		return
 	}
 
-	err := r.client.DeletePortProfile(ctx, state.ID.ValueString())
+	err := r.client.DeletePortProfile(ctx, state.SiteID.ValueString(), state.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Error deleting port profile", err.Error())
 		return
@@ -265,7 +274,16 @@ func (r *PortProfileResource) Delete(ctx context.Context, req resource.DeleteReq
 }
 
 func (r *PortProfileResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	profile, err := r.client.GetPortProfile(ctx, req.ID)
+	siteID, profileID, ok := parseImportID(req.ID)
+	if !ok {
+		resp.Diagnostics.AddError(
+			"Invalid import ID",
+			"Import ID must be in the format 'siteID/profileID'.",
+		)
+		return
+	}
+
+	profile, err := r.client.GetPortProfile(ctx, siteID, profileID)
 	if err != nil {
 		resp.Diagnostics.AddError("Error importing port profile", err.Error())
 		return
@@ -276,6 +294,7 @@ func (r *PortProfileResource) ImportState(ctx context.Context, req resource.Impo
 
 	state := PortProfileResourceModel{
 		ID:                   types.StringValue(profile.ID),
+		SiteID:               types.StringValue(siteID),
 		Name:                 types.StringValue(profile.Name),
 		NativeNetworkID:      types.StringValue(profile.NativeNetworkID),
 		TagNetworkIDs:        tagIDs,

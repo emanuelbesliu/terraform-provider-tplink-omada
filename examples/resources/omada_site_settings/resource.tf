@@ -3,6 +3,8 @@
 # Destroying it removes the resource from Terraform state without
 # changing settings on the controller.
 resource "omada_site_settings" "example" {
+  site_id = omada_site.example.id
+
   led_enable          = true
   mesh_enable         = true
   fast_roaming_enable = true

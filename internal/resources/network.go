@@ -23,14 +23,15 @@ type NetworkResource struct {
 
 // NetworkResourceModel maps the resource schema to Go types.
 type NetworkResourceModel struct {
-	ID            types.String `tfsdk:"id"`
-	Name          types.String `tfsdk:"name"`
-	Purpose       types.String `tfsdk:"purpose"`
-	VlanID        types.Int64  `tfsdk:"vlan_id"`
-	GatewaySubnet types.String `tfsdk:"gateway_subnet"`
-	DHCPEnabled   types.Bool   `tfsdk:"dhcp_enabled"`
-	DHCPStart     types.String `tfsdk:"dhcp_start"`
-	DHCPEnd       types.String `tfsdk:"dhcp_end"`
+	ID              types.String `tfsdk:"id"`
+	SiteID          types.String `tfsdk:"site_id"`
+	Name            types.String `tfsdk:"name"`
+	Purpose         types.String `tfsdk:"purpose"`
+	VlanID          types.Int64  `tfsdk:"vlan_id"`
+	GatewaySubnet   types.String `tfsdk:"gateway_subnet"`
+	DHCPEnabled     types.Bool   `tfsdk:"dhcp_enabled"`
+	DHCPStart       types.String `tfsdk:"dhcp_start"`
+	DHCPEnd         types.String `tfsdk:"dhcp_end"`
 	IGMPSnoopEnable types.Bool   `tfsdk:"igmp_snoop_enable"`
 }
 
@@ -53,6 +54,7 @@ func (r *NetworkResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"site_id": siteIDResourceSchema(),
 			"name": schema.StringAttribute{
 				Description: "The name of the network.",
 				Required:    true,
@@ -118,10 +120,12 @@ func (r *NetworkResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 
+	siteID := plan.SiteID.ValueString()
+
 	network := &client.Network{
-		Name:          plan.Name.ValueString(),
-		Vlan:          int(plan.VlanID.ValueInt64()),
-		GatewaySubnet: plan.GatewaySubnet.ValueString(),
+		Name:            plan.Name.ValueString(),
+		Vlan:            int(plan.VlanID.ValueInt64()),
+		GatewaySubnet:   plan.GatewaySubnet.ValueString(),
 		IGMPSnoopEnable: plan.IGMPSnoopEnable.ValueBool(),
 	}
 	if !plan.Purpose.IsNull() && !plan.Purpose.IsUnknown() {
@@ -136,7 +140,7 @@ func (r *NetworkResource) Create(ctx context.Context, req resource.CreateRequest
 		}
 	}
 
-	created, err := r.client.CreateNetwork(ctx, network)
+	created, err := r.client.CreateNetwork(ctx, siteID, network)
 	if err != nil {
 		resp.Diagnostics.AddError("Error creating network", err.Error())
 		return
@@ -174,7 +178,9 @@ func (r *NetworkResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 
-	network, err := r.client.GetNetwork(ctx, state.ID.ValueString())
+	siteID := state.SiteID.ValueString()
+
+	network, err := r.client.GetNetwork(ctx, siteID, state.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading network", err.Error())
 		return
@@ -219,11 +225,13 @@ func (r *NetworkResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
+	siteID := state.SiteID.ValueString()
+
 	network := &client.Network{
-		ID:            state.ID.ValueString(),
-		Name:          plan.Name.ValueString(),
-		Vlan:          int(plan.VlanID.ValueInt64()),
-		GatewaySubnet: plan.GatewaySubnet.ValueString(),
+		ID:              state.ID.ValueString(),
+		Name:            plan.Name.ValueString(),
+		Vlan:            int(plan.VlanID.ValueInt64()),
+		GatewaySubnet:   plan.GatewaySubnet.ValueString(),
 		IGMPSnoopEnable: plan.IGMPSnoopEnable.ValueBool(),
 	}
 	if !plan.Purpose.IsNull() {
@@ -238,13 +246,14 @@ func (r *NetworkResource) Update(ctx context.Context, req resource.UpdateRequest
 		}
 	}
 
-	updated, err := r.client.UpdateNetwork(ctx, state.ID.ValueString(), network)
+	updated, err := r.client.UpdateNetwork(ctx, siteID, state.ID.ValueString(), network)
 	if err != nil {
 		resp.Diagnostics.AddError("Error updating network", err.Error())
 		return
 	}
 
 	plan.ID = state.ID
+	plan.SiteID = state.SiteID
 	plan.Purpose = types.StringValue(updated.Purpose)
 	plan.IGMPSnoopEnable = types.BoolValue(updated.IGMPSnoopEnable)
 
@@ -276,7 +285,7 @@ func (r *NetworkResource) Delete(ctx context.Context, req resource.DeleteRequest
 		return
 	}
 
-	err := r.client.DeleteNetwork(ctx, state.ID.ValueString())
+	err := r.client.DeleteNetwork(ctx, state.SiteID.ValueString(), state.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Error deleting network", err.Error())
 		return
@@ -284,7 +293,16 @@ func (r *NetworkResource) Delete(ctx context.Context, req resource.DeleteRequest
 }
 
 func (r *NetworkResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	network, err := r.client.GetNetwork(ctx, req.ID)
+	siteID, networkID, ok := parseImportID(req.ID)
+	if !ok {
+		resp.Diagnostics.AddError(
+			"Invalid import ID",
+			"Import ID must be in the format 'siteID/networkID'.",
+		)
+		return
+	}
+
+	network, err := r.client.GetNetwork(ctx, siteID, networkID)
 	if err != nil {
 		resp.Diagnostics.AddError("Error importing network", err.Error())
 		return
@@ -292,6 +310,7 @@ func (r *NetworkResource) ImportState(ctx context.Context, req resource.ImportSt
 
 	state := NetworkResourceModel{
 		ID:              types.StringValue(network.ID),
+		SiteID:          types.StringValue(siteID),
 		Name:            types.StringValue(network.Name),
 		Purpose:         types.StringValue(network.Purpose),
 		VlanID:          types.Int64Value(int64(network.Vlan)),
