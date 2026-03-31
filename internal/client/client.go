@@ -1568,3 +1568,199 @@ func (c *Client) UpdateSwitchServiceConfig(ctx context.Context, siteID, mac stri
 	_, err := c.doSiteRequest(ctx, siteID, http.MethodPut, path, config)
 	return err
 }
+
+// --- Firewall ACL Rules ---
+
+// ACLDirection specifies which traffic directions an ACL applies to.
+type ACLDirection struct {
+	LanToWan bool     `json:"lanToWan"`
+	LanToLan bool     `json:"lanToLan"`
+	WanInIDs []string `json:"wanInIds,omitempty"`
+	VpnInIDs []string `json:"vpnInIds,omitempty"`
+}
+
+// ACLRule represents a firewall ACL rule.
+type ACLRule struct {
+	ID              string       `json:"id,omitempty"`
+	Name            string       `json:"name"`
+	Type            int          `json:"type"`            // 0=gateway, 1=switch, 2=eap
+	Index           int          `json:"index,omitempty"` // rule ordering (first-match-wins)
+	Status          bool         `json:"status"`          // enabled/disabled
+	Policy          int          `json:"policy"`          // 0=deny, 1=permit
+	Protocols       []int        `json:"protocols"`       // 6=TCP, 17=UDP, 1=ICMP, etc.
+	SourceType      int          `json:"sourceType"`      // 0=network, 2=ip_group
+	SourceIDs       []string     `json:"sourceIds"`
+	DestinationType int          `json:"destinationType"` // 0=network, 2=ip_group
+	DestinationIDs  []string     `json:"destinationIds"`
+	Direction       ACLDirection `json:"direction"`
+	StateMode       int          `json:"stateMode,omitempty"` // 0=auto (stateful)
+	BiDirectional   bool         `json:"biDirectional,omitempty"`
+	IPSec           int          `json:"ipSec,omitempty"`
+	Syslog          bool         `json:"syslog,omitempty"`
+	Resource        int          `json:"resource,omitempty"`
+}
+
+// ACLListResult wraps the paginated ACL list response with metadata.
+type ACLListResult struct {
+	TotalRows          int       `json:"totalRows"`
+	CurrentPage        int       `json:"currentPage"`
+	CurrentSize        int       `json:"currentSize"`
+	Data               []ACLRule `json:"data"`
+	ACLDisable         bool      `json:"aclDisable"`
+	SupportVPN         bool      `json:"supportVpn"`
+	SupportLanToLan    bool      `json:"supportLanToLan"`
+	SupportOsgMgtPage  bool      `json:"supportOsgMgtPage"`
+	SupportIPv6        bool      `json:"supportIpv6"`
+	SupportCountry     bool      `json:"supportCountry"`
+	SupportWireless    bool      `json:"supportWireless"`
+	SupportDomainGroup bool      `json:"supportDomainGroup"`
+	SupportSyslog      bool      `json:"supportSyslog"`
+	SupportNot         bool      `json:"supportNot"`
+	Resource           int       `json:"resource"`
+}
+
+// ListACLRules returns all ACL rules of the given type for a site.
+// aclType: 0=gateway, 1=switch, 2=eap
+func (c *Client) ListACLRules(ctx context.Context, siteID string, aclType int) ([]ACLRule, error) {
+	params := fmt.Sprintf("&type=%d&currentPage=1&currentPageSize=100", aclType)
+	resp, err := c.doSiteRequestWithParams(ctx, siteID, http.MethodGet, "/setting/firewall/acls", params, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var listResult ACLListResult
+	if err := json.Unmarshal(resp.Result, &listResult); err != nil {
+		return nil, fmt.Errorf("decoding ACL list: %w", err)
+	}
+	return listResult.Data, nil
+}
+
+// GetACLRule returns a single ACL rule by ID (found by listing all rules of the type).
+func (c *Client) GetACLRule(ctx context.Context, siteID, ruleID string, aclType int) (*ACLRule, error) {
+	rules, err := c.ListACLRules(ctx, siteID, aclType)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rules {
+		if r.ID == ruleID {
+			return &r, nil
+		}
+	}
+	return nil, fmt.Errorf("ACL rule %q not found", ruleID)
+}
+
+// CreateACLRule creates a new ACL rule.
+func (c *Client) CreateACLRule(ctx context.Context, siteID string, rule *ACLRule) (*ACLRule, error) {
+	resp, err := c.doSiteRequest(ctx, siteID, http.MethodPost, "/setting/firewall/acls", rule)
+	if err != nil {
+		return nil, err
+	}
+
+	var created ACLRule
+	if err := json.Unmarshal(resp.Result, &created); err != nil {
+		return nil, fmt.Errorf("decoding created ACL rule: %w", err)
+	}
+	return &created, nil
+}
+
+// UpdateACLRule updates an existing ACL rule.
+func (c *Client) UpdateACLRule(ctx context.Context, siteID, ruleID string, rule *ACLRule) (*ACLRule, error) {
+	resp, err := c.doSiteRequest(ctx, siteID, http.MethodPatch, fmt.Sprintf("/setting/firewall/acls/%s", ruleID), rule)
+	if err != nil {
+		return nil, err
+	}
+	if isEmptyResult(resp.Result) {
+		return c.GetACLRule(ctx, siteID, ruleID, rule.Type)
+	}
+	var updated ACLRule
+	if err := json.Unmarshal(resp.Result, &updated); err != nil {
+		return nil, fmt.Errorf("decoding updated ACL rule: %w", err)
+	}
+	return &updated, nil
+}
+
+// DeleteACLRule deletes an ACL rule.
+func (c *Client) DeleteACLRule(ctx context.Context, siteID, ruleID string) error {
+	_, err := c.doSiteRequest(ctx, siteID, http.MethodDelete, fmt.Sprintf("/setting/firewall/acls/%s", ruleID), nil)
+	return err
+}
+
+// --- IP Groups ---
+
+// IPGroupEntry represents a single IP + port combination within an IP group.
+type IPGroupEntry struct {
+	IP       string   `json:"ip"`
+	PortList []string `json:"portList,omitempty"` // port numbers/ranges as strings (e.g., "80", "7000-7100")
+}
+
+// IPGroup represents an IP/Port group used in ACL rules.
+type IPGroup struct {
+	ID     string         `json:"id,omitempty"`
+	Name   string         `json:"name"`
+	Type   int            `json:"type"` // 1=IP/Port group
+	IPList []IPGroupEntry `json:"ipList"`
+}
+
+// ListIPGroups returns all IP groups for a site.
+// Note: requires a gateway device adopted into the site.
+func (c *Client) ListIPGroups(ctx context.Context, siteID string) ([]IPGroup, error) {
+	resp, err := c.doSiteRequestWithParams(ctx, siteID, http.MethodGet, "/setting/firewall/ipGroups", "&currentPage=1&currentPageSize=100", nil)
+	if err != nil {
+		return nil, err
+	}
+	var groups []IPGroup
+	if err := decodePaginatedData(resp.Result, &groups); err != nil {
+		return nil, fmt.Errorf("decoding IP groups: %w", err)
+	}
+	return groups, nil
+}
+
+// GetIPGroup returns a single IP group by ID.
+func (c *Client) GetIPGroup(ctx context.Context, siteID, groupID string) (*IPGroup, error) {
+	groups, err := c.ListIPGroups(ctx, siteID)
+	if err != nil {
+		return nil, err
+	}
+	for _, g := range groups {
+		if g.ID == groupID {
+			return &g, nil
+		}
+	}
+	return nil, fmt.Errorf("IP group %q not found", groupID)
+}
+
+// CreateIPGroup creates a new IP group.
+func (c *Client) CreateIPGroup(ctx context.Context, siteID string, group *IPGroup) (*IPGroup, error) {
+	resp, err := c.doSiteRequest(ctx, siteID, http.MethodPost, "/setting/firewall/ipGroups", group)
+	if err != nil {
+		return nil, err
+	}
+
+	var created IPGroup
+	if err := json.Unmarshal(resp.Result, &created); err != nil {
+		return nil, fmt.Errorf("decoding created IP group: %w", err)
+	}
+	return &created, nil
+}
+
+// UpdateIPGroup updates an existing IP group.
+func (c *Client) UpdateIPGroup(ctx context.Context, siteID, groupID string, group *IPGroup) (*IPGroup, error) {
+	resp, err := c.doSiteRequest(ctx, siteID, http.MethodPatch, fmt.Sprintf("/setting/firewall/ipGroups/%s", groupID), group)
+	if err != nil {
+		return nil, err
+	}
+	if isEmptyResult(resp.Result) {
+		return c.GetIPGroup(ctx, siteID, groupID)
+	}
+	var updated IPGroup
+	if err := json.Unmarshal(resp.Result, &updated); err != nil {
+		return nil, fmt.Errorf("decoding updated IP group: %w", err)
+	}
+	return &updated, nil
+}
+
+// DeleteIPGroup deletes an IP group.
+func (c *Client) DeleteIPGroup(ctx context.Context, siteID, groupID string) error {
+	_, err := c.doSiteRequest(ctx, siteID, http.MethodDelete, fmt.Sprintf("/setting/firewall/ipGroups/%s", groupID), nil)
+	return err
+}

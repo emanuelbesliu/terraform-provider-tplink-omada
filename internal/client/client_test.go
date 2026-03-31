@@ -585,3 +585,507 @@ func TestNewClient_TrailingSlashNormalization(t *testing.T) {
 		t.Errorf("baseURL should not have trailing slash: %q", c.baseURL)
 	}
 }
+
+// =============================================================================
+// ACL Rules Tests
+// =============================================================================
+
+func TestListACLRules(t *testing.T) {
+	rules := []ACLRule{
+		{ID: "acl-1", Name: "Block IoT", Type: 0, Status: true, Policy: 0,
+			Protocols: []int{6, 17}, SourceType: 0, SourceIDs: []string{"net-1"},
+			DestinationType: 0, DestinationIDs: []string{"net-2"},
+			Direction: ACLDirection{LanToWan: false, LanToLan: true}, Index: 0},
+		{ID: "acl-2", Name: "Allow DNS", Type: 0, Status: true, Policy: 1,
+			Protocols: []int{17}, SourceType: 0, SourceIDs: []string{"net-1"},
+			DestinationType: 2, DestinationIDs: []string{"ipg-1"},
+			Direction: ACLDirection{LanToWan: true, LanToLan: false}, Index: 1},
+	}
+	listResult := ACLListResult{
+		TotalRows:   2,
+		CurrentPage: 1,
+		CurrentSize: 100,
+		Data:        rules,
+		ACLDisable:  false,
+		SupportVPN:  true,
+	}
+
+	server := mockOmadaServer(t, map[string]http.HandlerFunc{
+		"/sites/site-1/setting/firewall/acls": func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				t.Errorf("expected GET, got %s", r.Method)
+			}
+			// Verify type query param
+			if got := r.URL.Query().Get("type"); got != "0" {
+				t.Errorf("type query param = %q, want %q", got, "0")
+			}
+			json.NewEncoder(w).Encode(APIResponse{
+				ErrorCode: 0,
+				Result:    mustMarshal(t, listResult),
+			})
+		},
+	})
+	defer server.Close()
+	c := newTestClient(t, server)
+
+	got, err := c.ListACLRules(context.Background(), "site-1", 0)
+	if err != nil {
+		t.Fatalf("ListACLRules: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d rules, want 2", len(got))
+	}
+	if got[0].Name != "Block IoT" {
+		t.Errorf("rules[0].Name = %q, want %q", got[0].Name, "Block IoT")
+	}
+	if got[1].Policy != 1 {
+		t.Errorf("rules[1].Policy = %d, want %d", got[1].Policy, 1)
+	}
+	if !got[0].Direction.LanToLan {
+		t.Error("rules[0].Direction.LanToLan = false, want true")
+	}
+}
+
+func TestListACLRules_Empty(t *testing.T) {
+	listResult := ACLListResult{
+		TotalRows:   0,
+		CurrentPage: 1,
+		CurrentSize: 100,
+		Data:        []ACLRule{},
+		ACLDisable:  true,
+	}
+
+	server := mockOmadaServer(t, map[string]http.HandlerFunc{
+		"/sites/site-1/setting/firewall/acls": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(APIResponse{
+				ErrorCode: 0,
+				Result:    mustMarshal(t, listResult),
+			})
+		},
+	})
+	defer server.Close()
+	c := newTestClient(t, server)
+
+	got, err := c.ListACLRules(context.Background(), "site-1", 0)
+	if err != nil {
+		t.Fatalf("ListACLRules (empty): %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("got %d rules, want 0", len(got))
+	}
+}
+
+func TestGetACLRule_Found(t *testing.T) {
+	rules := []ACLRule{
+		{ID: "acl-1", Name: "Block IoT", Type: 0},
+		{ID: "acl-2", Name: "Allow DNS", Type: 0},
+	}
+	listResult := ACLListResult{TotalRows: 2, CurrentPage: 1, CurrentSize: 100, Data: rules}
+
+	server := mockOmadaServer(t, map[string]http.HandlerFunc{
+		"/sites/site-1/setting/firewall/acls": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(APIResponse{
+				ErrorCode: 0,
+				Result:    mustMarshal(t, listResult),
+			})
+		},
+	})
+	defer server.Close()
+	c := newTestClient(t, server)
+
+	got, err := c.GetACLRule(context.Background(), "site-1", "acl-2", 0)
+	if err != nil {
+		t.Fatalf("GetACLRule: %v", err)
+	}
+	if got.Name != "Allow DNS" {
+		t.Errorf("Name = %q, want %q", got.Name, "Allow DNS")
+	}
+}
+
+func TestGetACLRule_NotFound(t *testing.T) {
+	listResult := ACLListResult{TotalRows: 0, CurrentPage: 1, CurrentSize: 100, Data: []ACLRule{}}
+
+	server := mockOmadaServer(t, map[string]http.HandlerFunc{
+		"/sites/site-1/setting/firewall/acls": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(APIResponse{
+				ErrorCode: 0,
+				Result:    mustMarshal(t, listResult),
+			})
+		},
+	})
+	defer server.Close()
+	c := newTestClient(t, server)
+
+	_, err := c.GetACLRule(context.Background(), "site-1", "nonexistent", 0)
+	if err == nil {
+		t.Fatal("expected error for non-existent ACL rule, got nil")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("error = %q, expected to contain 'not found'", err.Error())
+	}
+}
+
+func TestCreateACLRule(t *testing.T) {
+	created := ACLRule{
+		ID: "acl-new", Name: "New Rule", Type: 0, Status: true,
+		Policy: 0, Protocols: []int{6}, SourceType: 0, SourceIDs: []string{"net-1"},
+		DestinationType: 0, DestinationIDs: []string{"net-2"}, Index: 5,
+	}
+
+	server := mockOmadaServer(t, map[string]http.HandlerFunc{
+		"/sites/site-1/setting/firewall/acls": func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				t.Errorf("expected POST, got %s", r.Method)
+			}
+			json.NewEncoder(w).Encode(APIResponse{
+				ErrorCode: 0,
+				Result:    mustMarshal(t, created),
+			})
+		},
+	})
+	defer server.Close()
+	c := newTestClient(t, server)
+
+	input := &ACLRule{
+		Name: "New Rule", Type: 0, Status: true, Policy: 0,
+		Protocols: []int{6}, SourceType: 0, SourceIDs: []string{"net-1"},
+		DestinationType: 0, DestinationIDs: []string{"net-2"},
+	}
+	got, err := c.CreateACLRule(context.Background(), "site-1", input)
+	if err != nil {
+		t.Fatalf("CreateACLRule: %v", err)
+	}
+	if got.ID != "acl-new" {
+		t.Errorf("ID = %q, want %q", got.ID, "acl-new")
+	}
+	if got.Index != 5 {
+		t.Errorf("Index = %d, want %d", got.Index, 5)
+	}
+}
+
+func TestUpdateACLRule(t *testing.T) {
+	updated := ACLRule{
+		ID: "acl-1", Name: "Updated Rule", Type: 0, Status: true,
+		Policy: 1, Protocols: []int{6, 17},
+	}
+
+	server := mockOmadaServer(t, map[string]http.HandlerFunc{
+		"/sites/site-1/setting/firewall/acls/acl-1": func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPatch {
+				t.Errorf("expected PATCH, got %s", r.Method)
+			}
+			json.NewEncoder(w).Encode(APIResponse{
+				ErrorCode: 0,
+				Result:    mustMarshal(t, updated),
+			})
+		},
+	})
+	defer server.Close()
+	c := newTestClient(t, server)
+
+	input := &ACLRule{Name: "Updated Rule", Type: 0, Policy: 1, Protocols: []int{6, 17}}
+	got, err := c.UpdateACLRule(context.Background(), "site-1", "acl-1", input)
+	if err != nil {
+		t.Fatalf("UpdateACLRule: %v", err)
+	}
+	if got.Name != "Updated Rule" {
+		t.Errorf("Name = %q, want %q", got.Name, "Updated Rule")
+	}
+}
+
+func TestUpdateACLRule_EmptyResult(t *testing.T) {
+	rules := []ACLRule{
+		{ID: "acl-1", Name: "Refreshed Rule", Type: 0, Status: true, Policy: 1},
+	}
+	listResult := ACLListResult{TotalRows: 1, CurrentPage: 1, CurrentSize: 100, Data: rules}
+
+	server := mockOmadaServer(t, map[string]http.HandlerFunc{
+		"/sites/site-1/setting/firewall/acls/acl-1": func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPatch {
+				json.NewEncoder(w).Encode(APIResponse{
+					ErrorCode: 0,
+					Result:    json.RawMessage(`{}`),
+				})
+				return
+			}
+		},
+		"/sites/site-1/setting/firewall/acls": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(APIResponse{
+				ErrorCode: 0,
+				Result:    mustMarshal(t, listResult),
+			})
+		},
+	})
+	defer server.Close()
+	c := newTestClient(t, server)
+
+	input := &ACLRule{Name: "Refreshed Rule", Type: 0, Policy: 1}
+	got, err := c.UpdateACLRule(context.Background(), "site-1", "acl-1", input)
+	if err != nil {
+		t.Fatalf("UpdateACLRule (empty result): %v", err)
+	}
+	if got.Name != "Refreshed Rule" {
+		t.Errorf("Name = %q, want %q", got.Name, "Refreshed Rule")
+	}
+}
+
+func TestDeleteACLRule(t *testing.T) {
+	server := mockOmadaServer(t, map[string]http.HandlerFunc{
+		"/sites/site-1/setting/firewall/acls/acl-1": func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodDelete {
+				t.Errorf("expected DELETE, got %s", r.Method)
+			}
+			json.NewEncoder(w).Encode(APIResponse{
+				ErrorCode: 0,
+				Result:    json.RawMessage(`{}`),
+			})
+		},
+	})
+	defer server.Close()
+	c := newTestClient(t, server)
+
+	err := c.DeleteACLRule(context.Background(), "site-1", "acl-1")
+	if err != nil {
+		t.Fatalf("DeleteACLRule: %v", err)
+	}
+}
+
+// =============================================================================
+// IP Groups Tests
+// =============================================================================
+
+func TestListIPGroups(t *testing.T) {
+	groups := []IPGroup{
+		{ID: "ipg-1", Name: "DNS Servers", Type: 1, IPList: []IPGroupEntry{
+			{IP: "8.8.8.8", PortList: []string{"53"}},
+			{IP: "1.1.1.1", PortList: []string{"53"}},
+		}},
+		{ID: "ipg-2", Name: "Web Servers", Type: 1, IPList: []IPGroupEntry{
+			{IP: "10.0.0.0/24", PortList: []string{"80", "443"}},
+		}},
+	}
+
+	server := mockOmadaServer(t, map[string]http.HandlerFunc{
+		"/sites/site-1/setting/firewall/ipGroups": func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				t.Errorf("expected GET, got %s", r.Method)
+			}
+			json.NewEncoder(w).Encode(APIResponse{
+				ErrorCode: 0,
+				Result:    paginatedResponse(t, groups),
+			})
+		},
+	})
+	defer server.Close()
+	c := newTestClient(t, server)
+
+	got, err := c.ListIPGroups(context.Background(), "site-1")
+	if err != nil {
+		t.Fatalf("ListIPGroups: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d groups, want 2", len(got))
+	}
+	if got[0].Name != "DNS Servers" {
+		t.Errorf("groups[0].Name = %q, want %q", got[0].Name, "DNS Servers")
+	}
+	if len(got[0].IPList) != 2 {
+		t.Errorf("groups[0].IPList length = %d, want 2", len(got[0].IPList))
+	}
+	if got[0].IPList[0].IP != "8.8.8.8" {
+		t.Errorf("groups[0].IPList[0].IP = %q, want %q", got[0].IPList[0].IP, "8.8.8.8")
+	}
+	if got[0].IPList[0].PortList[0] != "53" {
+		t.Errorf("groups[0].IPList[0].PortList[0] = %q, want %q", got[0].IPList[0].PortList[0], "53")
+	}
+}
+
+func TestListIPGroups_Empty(t *testing.T) {
+	server := mockOmadaServer(t, map[string]http.HandlerFunc{
+		"/sites/site-1/setting/firewall/ipGroups": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(APIResponse{
+				ErrorCode: 0,
+				Result:    paginatedResponse(t, []IPGroup{}),
+			})
+		},
+	})
+	defer server.Close()
+	c := newTestClient(t, server)
+
+	got, err := c.ListIPGroups(context.Background(), "site-1")
+	if err != nil {
+		t.Fatalf("ListIPGroups (empty): %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("got %d groups, want 0", len(got))
+	}
+}
+
+func TestGetIPGroup_Found(t *testing.T) {
+	groups := []IPGroup{
+		{ID: "ipg-1", Name: "DNS Servers", Type: 1},
+		{ID: "ipg-2", Name: "Web Servers", Type: 1},
+	}
+
+	server := mockOmadaServer(t, map[string]http.HandlerFunc{
+		"/sites/site-1/setting/firewall/ipGroups": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(APIResponse{
+				ErrorCode: 0,
+				Result:    paginatedResponse(t, groups),
+			})
+		},
+	})
+	defer server.Close()
+	c := newTestClient(t, server)
+
+	got, err := c.GetIPGroup(context.Background(), "site-1", "ipg-2")
+	if err != nil {
+		t.Fatalf("GetIPGroup: %v", err)
+	}
+	if got.Name != "Web Servers" {
+		t.Errorf("Name = %q, want %q", got.Name, "Web Servers")
+	}
+}
+
+func TestGetIPGroup_NotFound(t *testing.T) {
+	server := mockOmadaServer(t, map[string]http.HandlerFunc{
+		"/sites/site-1/setting/firewall/ipGroups": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(APIResponse{
+				ErrorCode: 0,
+				Result:    paginatedResponse(t, []IPGroup{}),
+			})
+		},
+	})
+	defer server.Close()
+	c := newTestClient(t, server)
+
+	_, err := c.GetIPGroup(context.Background(), "site-1", "nonexistent")
+	if err == nil {
+		t.Fatal("expected error for non-existent IP group, got nil")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("error = %q, expected to contain 'not found'", err.Error())
+	}
+}
+
+func TestCreateIPGroup(t *testing.T) {
+	created := IPGroup{
+		ID: "ipg-new", Name: "New Group", Type: 1,
+		IPList: []IPGroupEntry{{IP: "192.168.1.0/24", PortList: []string{"80"}}},
+	}
+
+	server := mockOmadaServer(t, map[string]http.HandlerFunc{
+		"/sites/site-1/setting/firewall/ipGroups": func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				t.Errorf("expected POST, got %s", r.Method)
+			}
+			json.NewEncoder(w).Encode(APIResponse{
+				ErrorCode: 0,
+				Result:    mustMarshal(t, created),
+			})
+		},
+	})
+	defer server.Close()
+	c := newTestClient(t, server)
+
+	input := &IPGroup{
+		Name: "New Group", Type: 1,
+		IPList: []IPGroupEntry{{IP: "192.168.1.0/24", PortList: []string{"80"}}},
+	}
+	got, err := c.CreateIPGroup(context.Background(), "site-1", input)
+	if err != nil {
+		t.Fatalf("CreateIPGroup: %v", err)
+	}
+	if got.ID != "ipg-new" {
+		t.Errorf("ID = %q, want %q", got.ID, "ipg-new")
+	}
+	if got.IPList[0].IP != "192.168.1.0/24" {
+		t.Errorf("IPList[0].IP = %q, want %q", got.IPList[0].IP, "192.168.1.0/24")
+	}
+}
+
+func TestUpdateIPGroup(t *testing.T) {
+	updated := IPGroup{
+		ID: "ipg-1", Name: "Updated Group", Type: 1,
+		IPList: []IPGroupEntry{{IP: "10.0.0.0/8"}},
+	}
+
+	server := mockOmadaServer(t, map[string]http.HandlerFunc{
+		"/sites/site-1/setting/firewall/ipGroups/ipg-1": func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPatch {
+				t.Errorf("expected PATCH, got %s", r.Method)
+			}
+			json.NewEncoder(w).Encode(APIResponse{
+				ErrorCode: 0,
+				Result:    mustMarshal(t, updated),
+			})
+		},
+	})
+	defer server.Close()
+	c := newTestClient(t, server)
+
+	input := &IPGroup{Name: "Updated Group", Type: 1, IPList: []IPGroupEntry{{IP: "10.0.0.0/8"}}}
+	got, err := c.UpdateIPGroup(context.Background(), "site-1", "ipg-1", input)
+	if err != nil {
+		t.Fatalf("UpdateIPGroup: %v", err)
+	}
+	if got.Name != "Updated Group" {
+		t.Errorf("Name = %q, want %q", got.Name, "Updated Group")
+	}
+}
+
+func TestUpdateIPGroup_EmptyResult(t *testing.T) {
+	groups := []IPGroup{
+		{ID: "ipg-1", Name: "Refreshed Group", Type: 1, IPList: []IPGroupEntry{{IP: "10.0.0.0/8"}}},
+	}
+
+	server := mockOmadaServer(t, map[string]http.HandlerFunc{
+		"/sites/site-1/setting/firewall/ipGroups/ipg-1": func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPatch {
+				json.NewEncoder(w).Encode(APIResponse{
+					ErrorCode: 0,
+					Result:    json.RawMessage(`{}`),
+				})
+				return
+			}
+		},
+		"/sites/site-1/setting/firewall/ipGroups": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(APIResponse{
+				ErrorCode: 0,
+				Result:    paginatedResponse(t, groups),
+			})
+		},
+	})
+	defer server.Close()
+	c := newTestClient(t, server)
+
+	input := &IPGroup{Name: "Refreshed Group", Type: 1}
+	got, err := c.UpdateIPGroup(context.Background(), "site-1", "ipg-1", input)
+	if err != nil {
+		t.Fatalf("UpdateIPGroup (empty result): %v", err)
+	}
+	if got.Name != "Refreshed Group" {
+		t.Errorf("Name = %q, want %q", got.Name, "Refreshed Group")
+	}
+}
+
+func TestDeleteIPGroup(t *testing.T) {
+	server := mockOmadaServer(t, map[string]http.HandlerFunc{
+		"/sites/site-1/setting/firewall/ipGroups/ipg-1": func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodDelete {
+				t.Errorf("expected DELETE, got %s", r.Method)
+			}
+			json.NewEncoder(w).Encode(APIResponse{
+				ErrorCode: 0,
+				Result:    json.RawMessage(`{}`),
+			})
+		},
+	})
+	defer server.Close()
+	c := newTestClient(t, server)
+
+	err := c.DeleteIPGroup(context.Background(), "site-1", "ipg-1")
+	if err != nil {
+		t.Fatalf("DeleteIPGroup: %v", err)
+	}
+}

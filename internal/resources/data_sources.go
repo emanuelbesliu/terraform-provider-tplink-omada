@@ -752,3 +752,278 @@ func (d *DevicesDataSource) Read(ctx context.Context, req datasource.ReadRequest
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
+
+// --- Firewall ACL Rules Data Source ---
+
+var _ datasource.DataSource = &FirewallACLsDataSource{}
+
+// FirewallACLsDataSource lists all ACL rules of a given type for a site.
+type FirewallACLsDataSource struct {
+	client *client.Client
+}
+
+type FirewallACLsDataSourceModel struct {
+	SiteID   types.String       `tfsdk:"site_id"`
+	Type     types.Int64        `tfsdk:"type"`
+	ACLRules []ACLRuleDataModel `tfsdk:"acl_rules"`
+}
+
+type ACLRuleDataModel struct {
+	ID              types.String `tfsdk:"id"`
+	Name            types.String `tfsdk:"name"`
+	Type            types.Int64  `tfsdk:"type"`
+	Index           types.Int64  `tfsdk:"index"`
+	Status          types.Bool   `tfsdk:"status"`
+	Policy          types.Int64  `tfsdk:"policy"`
+	Protocols       types.List   `tfsdk:"protocols"`
+	SourceType      types.Int64  `tfsdk:"source_type"`
+	SourceIDs       types.List   `tfsdk:"source_ids"`
+	DestinationType types.Int64  `tfsdk:"destination_type"`
+	DestinationIDs  types.List   `tfsdk:"destination_ids"`
+	LanToWan        types.Bool   `tfsdk:"lan_to_wan"`
+	LanToLan        types.Bool   `tfsdk:"lan_to_lan"`
+	BiDirectional   types.Bool   `tfsdk:"bi_directional"`
+}
+
+func NewFirewallACLsDataSource() datasource.DataSource {
+	return &FirewallACLsDataSource{}
+}
+
+func (d *FirewallACLsDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_firewall_acls"
+}
+
+func (d *FirewallACLsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+	resp.Schema = schema.Schema{
+		Description: "Lists all firewall ACL rules of a given type on the Omada Controller for the given site.",
+		Attributes: map[string]schema.Attribute{
+			"site_id": siteIDDataSourceSchema(),
+			"type": schema.Int64Attribute{
+				Description: "The ACL type to list: 0=gateway, 1=switch, 2=eap.",
+				Required:    true,
+			},
+			"acl_rules": schema.ListNestedAttribute{
+				Description: "List of ACL rules.",
+				Computed:    true,
+				NestedObject: schema.NestedAttributeObject{
+					Attributes: map[string]schema.Attribute{
+						"id":               schema.StringAttribute{Description: "The ACL rule ID.", Computed: true},
+						"name":             schema.StringAttribute{Description: "The rule name.", Computed: true},
+						"type":             schema.Int64Attribute{Description: "The ACL type: 0=gateway, 1=switch, 2=eap.", Computed: true},
+						"index":            schema.Int64Attribute{Description: "Rule ordering index.", Computed: true},
+						"status":           schema.BoolAttribute{Description: "Whether the rule is enabled.", Computed: true},
+						"policy":           schema.Int64Attribute{Description: "The policy: 0=deny, 1=permit.", Computed: true},
+						"protocols":        schema.ListAttribute{Description: "IP protocol numbers.", Computed: true, ElementType: types.Int64Type},
+						"source_type":      schema.Int64Attribute{Description: "Source type: 0=network, 2=ip_group.", Computed: true},
+						"source_ids":       schema.ListAttribute{Description: "Source entity IDs.", Computed: true, ElementType: types.StringType},
+						"destination_type": schema.Int64Attribute{Description: "Destination type: 0=network, 2=ip_group.", Computed: true},
+						"destination_ids":  schema.ListAttribute{Description: "Destination entity IDs.", Computed: true, ElementType: types.StringType},
+						"lan_to_wan":       schema.BoolAttribute{Description: "Applies to LAN-to-WAN traffic.", Computed: true},
+						"lan_to_lan":       schema.BoolAttribute{Description: "Applies to LAN-to-LAN traffic.", Computed: true},
+						"bi_directional":   schema.BoolAttribute{Description: "Applies in both directions.", Computed: true},
+					},
+				},
+			},
+		},
+	}
+}
+
+func (d *FirewallACLsDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
+	if req.ProviderData == nil {
+		return
+	}
+	c, ok := req.ProviderData.(*client.Client)
+	if !ok {
+		resp.Diagnostics.AddError(
+			"Unexpected DataSource Configure Type",
+			fmt.Sprintf("Expected *client.Client, got: %T", req.ProviderData),
+		)
+		return
+	}
+	d.client = c
+}
+
+func (d *FirewallACLsDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var config FirewallACLsDataSourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	siteID := config.SiteID.ValueString()
+	aclType := int(config.Type.ValueInt64())
+
+	rules, err := d.client.ListACLRules(ctx, siteID, aclType)
+	if err != nil {
+		resp.Diagnostics.AddError("Error listing ACL rules", err.Error())
+		return
+	}
+
+	state := FirewallACLsDataSourceModel{
+		SiteID:   config.SiteID,
+		Type:     config.Type,
+		ACLRules: []ACLRuleDataModel{},
+	}
+	for _, r := range rules {
+		protocols, diags := types.ListValueFrom(ctx, types.Int64Type, r.Protocols)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		sourceIDs, diags := types.ListValueFrom(ctx, types.StringType, r.SourceIDs)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		destIDs, diags := types.ListValueFrom(ctx, types.StringType, r.DestinationIDs)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		state.ACLRules = append(state.ACLRules, ACLRuleDataModel{
+			ID:              types.StringValue(r.ID),
+			Name:            types.StringValue(r.Name),
+			Type:            types.Int64Value(int64(r.Type)),
+			Index:           types.Int64Value(int64(r.Index)),
+			Status:          types.BoolValue(r.Status),
+			Policy:          types.Int64Value(int64(r.Policy)),
+			Protocols:       protocols,
+			SourceType:      types.Int64Value(int64(r.SourceType)),
+			SourceIDs:       sourceIDs,
+			DestinationType: types.Int64Value(int64(r.DestinationType)),
+			DestinationIDs:  destIDs,
+			LanToWan:        types.BoolValue(r.Direction.LanToWan),
+			LanToLan:        types.BoolValue(r.Direction.LanToLan),
+			BiDirectional:   types.BoolValue(r.BiDirectional),
+		})
+	}
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+}
+
+// --- IP Groups Data Source ---
+
+var _ datasource.DataSource = &IPGroupsDataSource{}
+
+// IPGroupsDataSource lists all IP/Port groups for a site.
+type IPGroupsDataSource struct {
+	client *client.Client
+}
+
+type IPGroupsDataSourceModel struct {
+	SiteID   types.String       `tfsdk:"site_id"`
+	IPGroups []IPGroupDataModel `tfsdk:"ip_groups"`
+}
+
+type IPGroupDataModel struct {
+	ID     types.String            `tfsdk:"id"`
+	Name   types.String            `tfsdk:"name"`
+	Type   types.Int64             `tfsdk:"type"`
+	IPList []IPGroupEntryDataModel `tfsdk:"ip_list"`
+}
+
+type IPGroupEntryDataModel struct {
+	IP       types.String `tfsdk:"ip"`
+	PortList types.List   `tfsdk:"port_list"`
+}
+
+func NewIPGroupsDataSource() datasource.DataSource {
+	return &IPGroupsDataSource{}
+}
+
+func (d *IPGroupsDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_ip_groups"
+}
+
+func (d *IPGroupsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+	resp.Schema = schema.Schema{
+		Description: "Lists all IP/Port groups on the Omada Controller for the given site. " +
+			"Requires a gateway device adopted into the site.",
+		Attributes: map[string]schema.Attribute{
+			"site_id": siteIDDataSourceSchema(),
+			"ip_groups": schema.ListNestedAttribute{
+				Description: "List of IP/Port groups.",
+				Computed:    true,
+				NestedObject: schema.NestedAttributeObject{
+					Attributes: map[string]schema.Attribute{
+						"id":   schema.StringAttribute{Description: "The IP group ID.", Computed: true},
+						"name": schema.StringAttribute{Description: "The IP group name.", Computed: true},
+						"type": schema.Int64Attribute{Description: "The group type (1=IP/Port group).", Computed: true},
+						"ip_list": schema.ListNestedAttribute{
+							Description: "List of IP address and port combinations.",
+							Computed:    true,
+							NestedObject: schema.NestedAttributeObject{
+								Attributes: map[string]schema.Attribute{
+									"ip":        schema.StringAttribute{Description: "IP address or CIDR subnet.", Computed: true},
+									"port_list": schema.ListAttribute{Description: "Port numbers or ranges.", Computed: true, ElementType: types.StringType},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func (d *IPGroupsDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
+	if req.ProviderData == nil {
+		return
+	}
+	c, ok := req.ProviderData.(*client.Client)
+	if !ok {
+		resp.Diagnostics.AddError(
+			"Unexpected DataSource Configure Type",
+			fmt.Sprintf("Expected *client.Client, got: %T", req.ProviderData),
+		)
+		return
+	}
+	d.client = c
+}
+
+func (d *IPGroupsDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var config IPGroupsDataSourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	siteID := config.SiteID.ValueString()
+
+	groups, err := d.client.ListIPGroups(ctx, siteID)
+	if err != nil {
+		resp.Diagnostics.AddError("Error listing IP groups", err.Error())
+		return
+	}
+
+	state := IPGroupsDataSourceModel{
+		SiteID:   config.SiteID,
+		IPGroups: []IPGroupDataModel{},
+	}
+	for _, g := range groups {
+		ipList := make([]IPGroupEntryDataModel, len(g.IPList))
+		for i, entry := range g.IPList {
+			ipList[i] = IPGroupEntryDataModel{
+				IP: types.StringValue(entry.IP),
+			}
+			if len(entry.PortList) > 0 {
+				portList, diags := types.ListValueFrom(ctx, types.StringType, entry.PortList)
+				resp.Diagnostics.Append(diags...)
+				if resp.Diagnostics.HasError() {
+					return
+				}
+				ipList[i].PortList = portList
+			} else {
+				ipList[i].PortList = types.ListNull(types.StringType)
+			}
+		}
+		state.IPGroups = append(state.IPGroups, IPGroupDataModel{
+			ID:     types.StringValue(g.ID),
+			Name:   types.StringValue(g.Name),
+			Type:   types.Int64Value(int64(g.Type)),
+			IPList: ipList,
+		})
+	}
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+}

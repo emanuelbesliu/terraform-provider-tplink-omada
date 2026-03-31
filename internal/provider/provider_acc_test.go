@@ -319,3 +319,34 @@ resource "omada_port_profile" "test" {
 		},
 	})
 }
+
+// =============================================================================
+// Data Source: omada_firewall_acls
+// Lists gateway ACL rules (type=0). Returns empty list when no gateway device
+// is adopted, but the endpoint still works.
+// =============================================================================
+
+func TestAccDataSourceFirewallACLs(t *testing.T) {
+	siteID := os.Getenv("OMADA_TEST_SITE_ID")
+	if siteID == "" {
+		siteID = "696a40fd49039e1d13a9c3f9"
+	}
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: fmt.Sprintf(`
+data "omada_firewall_acls" "test" {
+  site_id = %q
+  type    = 0
+}
+`, siteID),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("data.omada_firewall_acls.test", "acl_rules.#"),
+				),
+			},
+		},
+	})
+}

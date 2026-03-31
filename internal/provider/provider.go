@@ -132,6 +132,8 @@ func (p *OmadaProvider) Resources(_ context.Context) []func() resource.Resource 
 		resources.NewWlanGroupResource,
 		resources.NewDeviceAPResource,
 		resources.NewDeviceSwitchResource,
+		resources.NewACLRuleResource,
+		resources.NewIPGroupResource,
 	}
 }
 
@@ -143,6 +145,8 @@ func (p *OmadaProvider) DataSources(_ context.Context) []func() datasource.DataS
 		resources.NewSitesDataSource,
 		resources.NewSiteSettingsDataSource,
 		resources.NewDevicesDataSource,
+		resources.NewFirewallACLsDataSource,
+		resources.NewIPGroupsDataSource,
 	}
 }
 
