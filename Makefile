@@ -1,4 +1,4 @@
-BINARY_NAME = terraform-provider-omada
+BINARY_NAME = terraform-provider-tplink-omada
 DEV_OVERRIDES_PATH = $(shell pwd)
 
 .PHONY: build test fmt fmtcheck vet dev clean

@@ -200,9 +200,16 @@ func (r *PortProfileResource) Read(ctx context.Context, req resource.ReadRequest
 	state.SpanningTreeEnable = types.BoolValue(profile.SpanningTreeEnable)
 	state.LoopbackDetectEnable = types.BoolValue(profile.LoopbackDetectEnable)
 
-	tagIDs, diags := types.ListValueFrom(ctx, types.StringType, profile.TagNetworkIDs)
-	resp.Diagnostics.Append(diags...)
-	state.TagNetworkIDs = tagIDs
+	// Preserve null vs empty-list semantics: if the user didn't set tag_network_ids
+	// (state is null) and the API returned an empty list, keep it as null to avoid
+	// perpetual diff.
+	if len(profile.TagNetworkIDs) == 0 && state.TagNetworkIDs.IsNull() {
+		state.TagNetworkIDs = types.ListNull(types.StringType)
+	} else {
+		tagIDs, diags := types.ListValueFrom(ctx, types.StringType, profile.TagNetworkIDs)
+		resp.Diagnostics.Append(diags...)
+		state.TagNetworkIDs = tagIDs
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
