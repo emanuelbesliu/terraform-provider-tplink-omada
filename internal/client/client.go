@@ -1764,3 +1764,101 @@ func (c *Client) DeleteIPGroup(ctx context.Context, siteID, groupID string) erro
 	_, err := c.doSiteRequest(ctx, siteID, http.MethodDelete, fmt.Sprintf("/setting/firewall/ipGroups/%s", groupID), nil)
 	return err
 }
+
+// --- mDNS Reflector ---
+
+// MDNSNetworkSetting holds the network references for an mDNS rule.
+// For OSG (gateway) rules, the key is "osg"; for AP rules, the key is "ap".
+type MDNSNetworkSetting struct {
+	ProfileIDs      []string `json:"profileIds"`      // built-in service profiles (e.g. "buildIn-1" = AirPlay)
+	ServiceNetworks []string `json:"serviceNetworks"` // network IDs where services are provided
+	ClientNetworks  []string `json:"clientNetworks"`  // network IDs where clients discover services
+}
+
+// MDNSRule represents an mDNS reflector rule.
+type MDNSRule struct {
+	ID       string              `json:"id,omitempty"`
+	Name     string              `json:"name"`
+	Status   bool                `json:"status"`
+	Type     int                 `json:"type"`          // 0=AP, 1=OSG (gateway)
+	OSG      *MDNSNetworkSetting `json:"osg,omitempty"` // present when type=1
+	AP       *MDNSNetworkSetting `json:"ap,omitempty"`  // present when type=0
+	Resource int                 `json:"resource,omitempty"`
+}
+
+// MDNSListResult wraps the paginated mDNS list response with metadata.
+type MDNSListResult struct {
+	TotalRows    int        `json:"totalRows"`
+	CurrentPage  int        `json:"currentPage"`
+	CurrentSize  int        `json:"currentSize"`
+	Data         []MDNSRule `json:"data"`
+	APRuleNum    int        `json:"apRuleNum"`
+	OSGRuleNum   int        `json:"osgRuleNum"`
+	APRuleLimit  int        `json:"apRuleLimit"`
+	OSGRuleLimit int        `json:"osgRuleLimit"`
+}
+
+// ListMDNSRules returns all mDNS reflector rules for a site.
+func (c *Client) ListMDNSRules(ctx context.Context, siteID string) ([]MDNSRule, error) {
+	resp, err := c.doSiteRequestWithParams(ctx, siteID, http.MethodGet, "/setting/service/mdns", "&currentPage=1&currentPageSize=100", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var listResult MDNSListResult
+	if err := json.Unmarshal(resp.Result, &listResult); err != nil {
+		return nil, fmt.Errorf("decoding mDNS list: %w", err)
+	}
+	return listResult.Data, nil
+}
+
+// GetMDNSRule returns a single mDNS rule by ID (found by listing all rules).
+// The Omada 6.x API does not support GET by individual mDNS rule ID.
+func (c *Client) GetMDNSRule(ctx context.Context, siteID, ruleID string) (*MDNSRule, error) {
+	rules, err := c.ListMDNSRules(ctx, siteID)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rules {
+		if r.ID == ruleID {
+			return &r, nil
+		}
+	}
+	return nil, fmt.Errorf("mDNS rule %q not found", ruleID)
+}
+
+// CreateMDNSRule creates a new mDNS reflector rule.
+// The API returns the created rule ID as a plain string, not a full rule object.
+func (c *Client) CreateMDNSRule(ctx context.Context, siteID string, rule *MDNSRule) (*MDNSRule, error) {
+	resp, err := c.doSiteRequest(ctx, siteID, http.MethodPost, "/setting/service/mdns", rule)
+	if err != nil {
+		return nil, err
+	}
+
+	// The API returns the rule ID as a quoted string, not a JSON object.
+	var ruleID string
+	if err := json.Unmarshal(resp.Result, &ruleID); err != nil {
+		return nil, fmt.Errorf("decoding created mDNS rule ID: %w", err)
+	}
+
+	// Fetch the full rule by listing + filtering.
+	return c.GetMDNSRule(ctx, siteID, ruleID)
+}
+
+// UpdateMDNSRule updates an existing mDNS reflector rule.
+// The Omada 6.x API uses PUT (not PATCH) for mDNS rules.
+func (c *Client) UpdateMDNSRule(ctx context.Context, siteID, ruleID string, rule *MDNSRule) (*MDNSRule, error) {
+	_, err := c.doSiteRequest(ctx, siteID, http.MethodPut, fmt.Sprintf("/setting/service/mdns/%s", ruleID), rule)
+	if err != nil {
+		return nil, err
+	}
+
+	// PUT returns empty success; re-fetch via list.
+	return c.GetMDNSRule(ctx, siteID, ruleID)
+}
+
+// DeleteMDNSRule deletes an mDNS reflector rule.
+func (c *Client) DeleteMDNSRule(ctx context.Context, siteID, ruleID string) error {
+	_, err := c.doSiteRequest(ctx, siteID, http.MethodDelete, fmt.Sprintf("/setting/service/mdns/%s", ruleID), nil)
+	return err
+}

@@ -1027,3 +1027,144 @@ func (d *IPGroupsDataSource) Read(ctx context.Context, req datasource.ReadReques
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
+
+// --- mDNS Reflector Data Source ---
+
+var _ datasource.DataSource = &MDNSReflectorsDataSource{}
+
+// MDNSReflectorsDataSource lists all mDNS reflector rules for a site.
+type MDNSReflectorsDataSource struct {
+	client *client.Client
+}
+
+type MDNSReflectorsDataSourceModel struct {
+	SiteID types.String             `tfsdk:"site_id"`
+	Rules  []MDNSReflectorDataModel `tfsdk:"rules"`
+}
+
+type MDNSReflectorDataModel struct {
+	ID              types.String `tfsdk:"id"`
+	Name            types.String `tfsdk:"name"`
+	Type            types.Int64  `tfsdk:"type"`
+	Status          types.Bool   `tfsdk:"status"`
+	ProfileIDs      types.List   `tfsdk:"profile_ids"`
+	ServiceNetworks types.List   `tfsdk:"service_networks"`
+	ClientNetworks  types.List   `tfsdk:"client_networks"`
+}
+
+func NewMDNSReflectorsDataSource() datasource.DataSource {
+	return &MDNSReflectorsDataSource{}
+}
+
+func (d *MDNSReflectorsDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_mdns_reflectors"
+}
+
+func (d *MDNSReflectorsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+	resp.Schema = schema.Schema{
+		Description: "Lists all mDNS reflector rules on the Omada Controller for the given site.",
+		Attributes: map[string]schema.Attribute{
+			"site_id": siteIDDataSourceSchema(),
+			"rules": schema.ListNestedAttribute{
+				Description: "List of mDNS reflector rules.",
+				Computed:    true,
+				NestedObject: schema.NestedAttributeObject{
+					Attributes: map[string]schema.Attribute{
+						"id":               schema.StringAttribute{Description: "The mDNS rule ID.", Computed: true},
+						"name":             schema.StringAttribute{Description: "The rule name.", Computed: true},
+						"type":             schema.Int64Attribute{Description: "Rule type: 0=AP, 1=OSG (gateway).", Computed: true},
+						"status":           schema.BoolAttribute{Description: "Whether the rule is enabled.", Computed: true},
+						"profile_ids":      schema.ListAttribute{Description: "Built-in service profile IDs.", Computed: true, ElementType: types.StringType},
+						"service_networks": schema.ListAttribute{Description: "Network IDs where services are provided.", Computed: true, ElementType: types.StringType},
+						"client_networks":  schema.ListAttribute{Description: "Network IDs where clients discover services.", Computed: true, ElementType: types.StringType},
+					},
+				},
+			},
+		},
+	}
+}
+
+func (d *MDNSReflectorsDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
+	if req.ProviderData == nil {
+		return
+	}
+	c, ok := req.ProviderData.(*client.Client)
+	if !ok {
+		resp.Diagnostics.AddError(
+			"Unexpected DataSource Configure Type",
+			fmt.Sprintf("Expected *client.Client, got: %T", req.ProviderData),
+		)
+		return
+	}
+	d.client = c
+}
+
+func (d *MDNSReflectorsDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var config MDNSReflectorsDataSourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	siteID := config.SiteID.ValueString()
+
+	rules, err := d.client.ListMDNSRules(ctx, siteID)
+	if err != nil {
+		resp.Diagnostics.AddError("Error listing mDNS reflector rules", err.Error())
+		return
+	}
+
+	state := MDNSReflectorsDataSourceModel{
+		SiteID: config.SiteID,
+		Rules:  []MDNSReflectorDataModel{},
+	}
+	for _, r := range rules {
+		// Extract network settings from the appropriate nested key
+		var setting *client.MDNSNetworkSetting
+		if r.OSG != nil {
+			setting = r.OSG
+		} else if r.AP != nil {
+			setting = r.AP
+		}
+
+		var profileIDs, serviceNetworks, clientNetworks types.List
+		if setting != nil {
+			p, diags := types.ListValueFrom(ctx, types.StringType, setting.ProfileIDs)
+			resp.Diagnostics.Append(diags...)
+			if resp.Diagnostics.HasError() {
+				return
+			}
+			profileIDs = p
+
+			s, diags := types.ListValueFrom(ctx, types.StringType, setting.ServiceNetworks)
+			resp.Diagnostics.Append(diags...)
+			if resp.Diagnostics.HasError() {
+				return
+			}
+			serviceNetworks = s
+
+			cn, diags := types.ListValueFrom(ctx, types.StringType, setting.ClientNetworks)
+			resp.Diagnostics.Append(diags...)
+			if resp.Diagnostics.HasError() {
+				return
+			}
+			clientNetworks = cn
+		} else {
+			profileIDs, _ = types.ListValueFrom(ctx, types.StringType, []string{})
+			serviceNetworks, _ = types.ListValueFrom(ctx, types.StringType, []string{})
+			clientNetworks, _ = types.ListValueFrom(ctx, types.StringType, []string{})
+		}
+
+		state.Rules = append(state.Rules, MDNSReflectorDataModel{
+			ID:              types.StringValue(r.ID),
+			Name:            types.StringValue(r.Name),
+			Type:            types.Int64Value(int64(r.Type)),
+			Status:          types.BoolValue(r.Status),
+			ProfileIDs:      profileIDs,
+			ServiceNetworks: serviceNetworks,
+			ClientNetworks:  clientNetworks,
+		})
+	}
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+}

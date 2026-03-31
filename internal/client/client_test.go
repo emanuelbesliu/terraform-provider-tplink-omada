@@ -1089,3 +1089,275 @@ func TestDeleteIPGroup(t *testing.T) {
 		t.Fatalf("DeleteIPGroup: %v", err)
 	}
 }
+
+// =============================================================================
+// mDNS Reflector Tests
+// =============================================================================
+
+// mdnsListResponse wraps mDNS rules in the custom MDNSListResult envelope.
+func mdnsListResponse(t *testing.T, rules []MDNSRule) json.RawMessage {
+	t.Helper()
+	return mustMarshal(t, MDNSListResult{
+		TotalRows:    len(rules),
+		CurrentPage:  1,
+		CurrentSize:  100,
+		Data:         rules,
+		APRuleNum:    0,
+		OSGRuleNum:   len(rules),
+		APRuleLimit:  16,
+		OSGRuleLimit: 20,
+	})
+}
+
+func TestListMDNSRules(t *testing.T) {
+	rules := []MDNSRule{
+		{ID: "mdns-1", Name: "AirPlay Reflector", Status: true, Type: 1,
+			OSG: &MDNSNetworkSetting{
+				ProfileIDs:      []string{"buildIn-1"},
+				ServiceNetworks: []string{"net-1"},
+				ClientNetworks:  []string{"net-2"},
+			}},
+		{ID: "mdns-2", Name: "Chromecast Reflector", Status: false, Type: 1,
+			OSG: &MDNSNetworkSetting{
+				ProfileIDs:      []string{"buildIn-2"},
+				ServiceNetworks: []string{"net-3"},
+				ClientNetworks:  []string{"net-1", "net-2"},
+			}},
+	}
+
+	server := mockOmadaServer(t, map[string]http.HandlerFunc{
+		"/sites/site-1/setting/service/mdns": func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				t.Errorf("expected GET, got %s", r.Method)
+			}
+			json.NewEncoder(w).Encode(APIResponse{
+				ErrorCode: 0,
+				Result:    mdnsListResponse(t, rules),
+			})
+		},
+	})
+	defer server.Close()
+	c := newTestClient(t, server)
+
+	got, err := c.ListMDNSRules(context.Background(), "site-1")
+	if err != nil {
+		t.Fatalf("ListMDNSRules: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d rules, want 2", len(got))
+	}
+	if got[0].Name != "AirPlay Reflector" {
+		t.Errorf("rules[0].Name = %q, want %q", got[0].Name, "AirPlay Reflector")
+	}
+	if got[0].OSG == nil {
+		t.Fatal("rules[0].OSG is nil, expected non-nil")
+	}
+	if got[0].OSG.ProfileIDs[0] != "buildIn-1" {
+		t.Errorf("rules[0].OSG.ProfileIDs[0] = %q, want %q", got[0].OSG.ProfileIDs[0], "buildIn-1")
+	}
+	if got[0].OSG.ServiceNetworks[0] != "net-1" {
+		t.Errorf("rules[0].OSG.ServiceNetworks[0] = %q, want %q", got[0].OSG.ServiceNetworks[0], "net-1")
+	}
+	if got[0].OSG.ClientNetworks[0] != "net-2" {
+		t.Errorf("rules[0].OSG.ClientNetworks[0] = %q, want %q", got[0].OSG.ClientNetworks[0], "net-2")
+	}
+}
+
+func TestListMDNSRules_Empty(t *testing.T) {
+	server := mockOmadaServer(t, map[string]http.HandlerFunc{
+		"/sites/site-1/setting/service/mdns": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(APIResponse{
+				ErrorCode: 0,
+				Result:    mdnsListResponse(t, []MDNSRule{}),
+			})
+		},
+	})
+	defer server.Close()
+	c := newTestClient(t, server)
+
+	got, err := c.ListMDNSRules(context.Background(), "site-1")
+	if err != nil {
+		t.Fatalf("ListMDNSRules (empty): %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("got %d rules, want 0", len(got))
+	}
+}
+
+func TestGetMDNSRule_Found(t *testing.T) {
+	rules := []MDNSRule{
+		{ID: "mdns-1", Name: "Rule A", Status: true, Type: 1},
+		{ID: "mdns-2", Name: "Rule B", Status: false, Type: 1},
+	}
+
+	server := mockOmadaServer(t, map[string]http.HandlerFunc{
+		"/sites/site-1/setting/service/mdns": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(APIResponse{
+				ErrorCode: 0,
+				Result:    mdnsListResponse(t, rules),
+			})
+		},
+	})
+	defer server.Close()
+	c := newTestClient(t, server)
+
+	got, err := c.GetMDNSRule(context.Background(), "site-1", "mdns-2")
+	if err != nil {
+		t.Fatalf("GetMDNSRule: %v", err)
+	}
+	if got.Name != "Rule B" {
+		t.Errorf("Name = %q, want %q", got.Name, "Rule B")
+	}
+}
+
+func TestGetMDNSRule_NotFound(t *testing.T) {
+	server := mockOmadaServer(t, map[string]http.HandlerFunc{
+		"/sites/site-1/setting/service/mdns": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(APIResponse{
+				ErrorCode: 0,
+				Result:    mdnsListResponse(t, []MDNSRule{}),
+			})
+		},
+	})
+	defer server.Close()
+	c := newTestClient(t, server)
+
+	_, err := c.GetMDNSRule(context.Background(), "site-1", "nonexistent")
+	if err == nil {
+		t.Fatal("expected error for non-existent mDNS rule, got nil")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("error = %q, expected to contain 'not found'", err.Error())
+	}
+}
+
+func TestCreateMDNSRule(t *testing.T) {
+	createdRule := MDNSRule{
+		ID: "mdns-new", Name: "New mDNS", Status: true, Type: 1,
+		OSG: &MDNSNetworkSetting{
+			ProfileIDs:      []string{"buildIn-1"},
+			ServiceNetworks: []string{"net-1"},
+			ClientNetworks:  []string{"net-2"},
+		},
+	}
+
+	callCount := 0
+	server := mockOmadaServer(t, map[string]http.HandlerFunc{
+		"/sites/site-1/setting/service/mdns": func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPost {
+				// Create returns just the ID as a quoted string
+				json.NewEncoder(w).Encode(APIResponse{
+					ErrorCode: 0,
+					Result:    json.RawMessage(`"mdns-new"`),
+				})
+				return
+			}
+			if r.Method == http.MethodGet {
+				callCount++
+				// List returns the full rule (for the re-fetch after create)
+				json.NewEncoder(w).Encode(APIResponse{
+					ErrorCode: 0,
+					Result:    mdnsListResponse(t, []MDNSRule{createdRule}),
+				})
+				return
+			}
+		},
+	})
+	defer server.Close()
+	c := newTestClient(t, server)
+
+	input := &MDNSRule{
+		Name: "New mDNS", Status: true, Type: 1,
+		OSG: &MDNSNetworkSetting{
+			ProfileIDs:      []string{"buildIn-1"},
+			ServiceNetworks: []string{"net-1"},
+			ClientNetworks:  []string{"net-2"},
+		},
+	}
+	got, err := c.CreateMDNSRule(context.Background(), "site-1", input)
+	if err != nil {
+		t.Fatalf("CreateMDNSRule: %v", err)
+	}
+	if got.ID != "mdns-new" {
+		t.Errorf("ID = %q, want %q", got.ID, "mdns-new")
+	}
+	if got.Name != "New mDNS" {
+		t.Errorf("Name = %q, want %q", got.Name, "New mDNS")
+	}
+	if callCount == 0 {
+		t.Error("expected at least one GET call to re-fetch after create")
+	}
+}
+
+func TestUpdateMDNSRule(t *testing.T) {
+	updatedRule := MDNSRule{
+		ID: "mdns-1", Name: "Updated mDNS", Status: false, Type: 1,
+		OSG: &MDNSNetworkSetting{
+			ProfileIDs:      []string{"buildIn-1"},
+			ServiceNetworks: []string{"net-1"},
+			ClientNetworks:  []string{"net-2"},
+		},
+	}
+
+	server := mockOmadaServer(t, map[string]http.HandlerFunc{
+		"/sites/site-1/setting/service/mdns/mdns-1": func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPut {
+				t.Errorf("expected PUT, got %s", r.Method)
+			}
+			// PUT returns empty success
+			json.NewEncoder(w).Encode(APIResponse{
+				ErrorCode: 0,
+				Result:    json.RawMessage(`{}`),
+			})
+		},
+		"/sites/site-1/setting/service/mdns": func(w http.ResponseWriter, r *http.Request) {
+			// List for re-fetch
+			json.NewEncoder(w).Encode(APIResponse{
+				ErrorCode: 0,
+				Result:    mdnsListResponse(t, []MDNSRule{updatedRule}),
+			})
+		},
+	})
+	defer server.Close()
+	c := newTestClient(t, server)
+
+	input := &MDNSRule{
+		Name: "Updated mDNS", Status: false, Type: 1,
+		OSG: &MDNSNetworkSetting{
+			ProfileIDs:      []string{"buildIn-1"},
+			ServiceNetworks: []string{"net-1"},
+			ClientNetworks:  []string{"net-2"},
+		},
+	}
+	got, err := c.UpdateMDNSRule(context.Background(), "site-1", "mdns-1", input)
+	if err != nil {
+		t.Fatalf("UpdateMDNSRule: %v", err)
+	}
+	if got.Name != "Updated mDNS" {
+		t.Errorf("Name = %q, want %q", got.Name, "Updated mDNS")
+	}
+	if got.Status != false {
+		t.Errorf("Status = %v, want false", got.Status)
+	}
+}
+
+func TestDeleteMDNSRule(t *testing.T) {
+	server := mockOmadaServer(t, map[string]http.HandlerFunc{
+		"/sites/site-1/setting/service/mdns/mdns-1": func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodDelete {
+				t.Errorf("expected DELETE, got %s", r.Method)
+			}
+			json.NewEncoder(w).Encode(APIResponse{
+				ErrorCode: 0,
+				Result:    json.RawMessage(`"Deleted Rule"`),
+			})
+		},
+	})
+	defer server.Close()
+	c := newTestClient(t, server)
+
+	err := c.DeleteMDNSRule(context.Background(), "site-1", "mdns-1")
+	if err != nil {
+		t.Fatalf("DeleteMDNSRule: %v", err)
+	}
+}

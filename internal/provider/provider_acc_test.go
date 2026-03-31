@@ -321,6 +321,35 @@ resource "omada_port_profile" "test" {
 }
 
 // =============================================================================
+// Data Source: omada_mdns_reflectors
+// Lists mDNS reflector rules. Returns empty list when no rules are configured.
+// =============================================================================
+
+func TestAccDataSourceMDNSReflectors(t *testing.T) {
+	siteID := os.Getenv("OMADA_TEST_SITE_ID")
+	if siteID == "" {
+		siteID = "696a40fd49039e1d13a9c3f9"
+	}
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: fmt.Sprintf(`
+data "omada_mdns_reflectors" "test" {
+  site_id = %q
+}
+`, siteID),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("data.omada_mdns_reflectors.test", "rules.#"),
+				),
+			},
+		},
+	})
+}
+
+// =============================================================================
 // Data Source: omada_firewall_acls
 // Lists gateway ACL rules (type=0). Returns empty list when no gateway device
 // is adopted, but the endpoint still works.
