@@ -9,7 +9,7 @@ on:
       GPG_PRIVATE_KEY:
         required: true
       PASSPHRASE:
-        required: true
+        required: false
 
 permissions:
   contents: write
