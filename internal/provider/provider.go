@@ -135,6 +135,8 @@ func (p *OmadaProvider) Resources(_ context.Context) []func() resource.Resource 
 		resources.NewACLRuleResource,
 		resources.NewIPGroupResource,
 		resources.NewMDNSReflectorResource,
+		resources.NewSAMLIdPResource,
+		resources.NewSAMLRoleResource,
 	}
 }
 

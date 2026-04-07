@@ -1862,3 +1862,226 @@ func (c *Client) DeleteMDNSRule(ctx context.Context, siteID, ruleID string) erro
 	_, err := c.doSiteRequest(ctx, siteID, http.MethodDelete, fmt.Sprintf("/setting/service/mdns/%s", ruleID), nil)
 	return err
 }
+
+// ====================================================================
+// SAML Identity Provider (IdP) Connections
+// ====================================================================
+
+// SAMLIdP represents a SAML identity provider connection.
+type SAMLIdP struct {
+	IdpID       string `json:"idpId"`
+	OmadacID    string `json:"omadacId,omitempty"`
+	IdpName     string `json:"idpName"`
+	Description string `json:"description,omitempty"`
+	ConfMethod  int    `json:"confMethod"`
+	EntityID    string `json:"entityId"`
+	LoginURL    string `json:"loginUrl"`
+	X509Cert    string `json:"x509Certificate"`
+	EntityURL   string `json:"entityUrl,omitempty"`
+	SignOnURL   string `json:"signOnUrl,omitempty"`
+}
+
+// SAMLIdPCreateRequest is the payload for creating/updating a SAML IdP.
+type SAMLIdPCreateRequest struct {
+	IdpName     string `json:"idpName"`
+	Description string `json:"description,omitempty"`
+	ConfMethod  int    `json:"confMethod"`
+	EntityID    string `json:"entityId"`
+	LoginURL    string `json:"loginUrl"`
+	X509Cert    string `json:"x509Certificate"`
+}
+
+// ListSAMLIdPs returns all SAML identity provider connections.
+func (c *Client) ListSAMLIdPs(ctx context.Context) ([]SAMLIdP, error) {
+	url := c.globalURL("/idps") + "&currentPage=1&currentPageSize=100"
+	resp, err := c.doRequest(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	var idps []SAMLIdP
+	if err := decodePaginatedData(resp.Result, &idps); err != nil {
+		return nil, fmt.Errorf("decoding SAML IdPs: %w", err)
+	}
+	return idps, nil
+}
+
+// GetSAMLIdP returns a single SAML IdP by ID.
+// The GET-by-ID endpoint is not supported (-1600), so we list all and filter.
+func (c *Client) GetSAMLIdP(ctx context.Context, idpID string) (*SAMLIdP, error) {
+	idps, err := c.ListSAMLIdPs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, idp := range idps {
+		if idp.IdpID == idpID {
+			return &idp, nil
+		}
+	}
+	return nil, fmt.Errorf("SAML IdP %q not found", idpID)
+}
+
+// CreateSAMLIdP creates a new SAML identity provider connection.
+// confMethod is always set to 2 (Manual).
+// Returns the created IdP (fetched via list+filter since POST returns minimal data).
+func (c *Client) CreateSAMLIdP(ctx context.Context, req *SAMLIdPCreateRequest) (*SAMLIdP, error) {
+	req.ConfMethod = 2
+	url := c.globalURL("/idps")
+	_, err := c.doRequest(ctx, http.MethodPost, url, req)
+	if err != nil {
+		return nil, err
+	}
+
+	// POST doesn't return the new ID reliably; list all and match by name.
+	idps, err := c.ListSAMLIdPs(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing SAML IdPs after create: %w", err)
+	}
+	for _, idp := range idps {
+		if idp.IdpName == req.IdpName {
+			return &idp, nil
+		}
+	}
+	return nil, fmt.Errorf("SAML IdP %q not found after creation", req.IdpName)
+}
+
+// UpdateSAMLIdP updates an existing SAML IdP via PUT (full replace).
+func (c *Client) UpdateSAMLIdP(ctx context.Context, idpID string, req *SAMLIdPCreateRequest) (*SAMLIdP, error) {
+	req.ConfMethod = 2
+	url := c.globalURL(fmt.Sprintf("/idps/%s", idpID))
+	_, err := c.doRequest(ctx, http.MethodPut, url, req)
+	if err != nil {
+		return nil, err
+	}
+
+	// Re-fetch via list+filter.
+	return c.GetSAMLIdP(ctx, idpID)
+}
+
+// DeleteSAMLIdP deletes a SAML identity provider connection.
+func (c *Client) DeleteSAMLIdP(ctx context.Context, idpID string) error {
+	url := c.globalURL(fmt.Sprintf("/idps/%s", idpID))
+	_, err := c.doRequest(ctx, http.MethodDelete, url, nil)
+	return err
+}
+
+// ====================================================================
+// SAML Roles (External User Groups)
+// ====================================================================
+
+// SAMLRoleSite represents a site reference in a SAML role.
+type SAMLRoleSite struct {
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+}
+
+// SAMLRoleSitePrivilege represents the site privilege configuration.
+type SAMLRoleSitePrivilege struct {
+	SiteType    int            `json:"siteType"`
+	Sites       []SAMLRoleSite `json:"sites"`
+	ServiceType int            `json:"serviceType"`
+}
+
+// SAMLRoleSitePrivilegeCreate is used in create/update requests where sites
+// are specified as plain string IDs.
+type SAMLRoleSitePrivilegeCreate struct {
+	SiteType    int      `json:"siteType"`
+	Sites       []string `json:"sites"`
+	ServiceType int      `json:"serviceType"`
+}
+
+// SAMLRole represents a SAML external user group (role mapping).
+type SAMLRole struct {
+	ID              string                  `json:"id"`
+	OmadacID        string                  `json:"omadacId,omitempty"`
+	UserGroupName   string                  `json:"userGroupName"`
+	RoleID          string                  `json:"roleId"`
+	RoleName        string                  `json:"roleName,omitempty"`
+	RoleType        int                     `json:"roleType,omitempty"`
+	SitePrivileges  []SAMLRoleSitePrivilege `json:"sitePrivileges,omitempty"`
+	TemporaryEnable bool                    `json:"temporaryEnable"`
+	StartTime       int64                   `json:"startTime"`
+	EndTime         int64                   `json:"endTime"`
+}
+
+// SAMLRoleCreateRequest is the payload for creating/updating a SAML role.
+type SAMLRoleCreateRequest struct {
+	UserGroupName   string                        `json:"userGroupName"`
+	RoleID          string                        `json:"roleId"`
+	TemporaryEnable bool                          `json:"temporaryEnable"`
+	StartTime       int64                         `json:"startTime"`
+	EndTime         int64                         `json:"endTime"`
+	SitePrivileges  []SAMLRoleSitePrivilegeCreate `json:"sitePrivileges"`
+}
+
+// ListSAMLRoles returns all SAML external user groups.
+func (c *Client) ListSAMLRoles(ctx context.Context) ([]SAMLRole, error) {
+	url := c.globalURL("/extendUserGroups") + "&currentPage=1&currentPageSize=100"
+	resp, err := c.doRequest(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	var roles []SAMLRole
+	if err := decodePaginatedData(resp.Result, &roles); err != nil {
+		return nil, fmt.Errorf("decoding SAML roles: %w", err)
+	}
+	return roles, nil
+}
+
+// GetSAMLRole returns a single SAML role by ID.
+func (c *Client) GetSAMLRole(ctx context.Context, roleID string) (*SAMLRole, error) {
+	url := c.globalURL(fmt.Sprintf("/extendUserGroups/%s", roleID))
+	resp, err := c.doRequest(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	var role SAMLRole
+	if err := json.Unmarshal(resp.Result, &role); err != nil {
+		return nil, fmt.Errorf("decoding SAML role: %w", err)
+	}
+	return &role, nil
+}
+
+// CreateSAMLRole creates a new SAML external user group.
+func (c *Client) CreateSAMLRole(ctx context.Context, req *SAMLRoleCreateRequest) (*SAMLRole, error) {
+	url := c.globalURL("/extendUserGroups")
+	resp, err := c.doRequest(ctx, http.MethodPost, url, req)
+	if err != nil {
+		return nil, err
+	}
+
+	// POST returns the new ID.
+	var roleID string
+	if err := json.Unmarshal(resp.Result, &roleID); err != nil {
+		// Some endpoints return the object directly; try fetching by listing.
+		roles, listErr := c.ListSAMLRoles(ctx)
+		if listErr != nil {
+			return nil, fmt.Errorf("decoding created SAML role ID: %w", err)
+		}
+		for _, r := range roles {
+			if r.UserGroupName == req.UserGroupName {
+				return &r, nil
+			}
+		}
+		return nil, fmt.Errorf("SAML role %q not found after creation", req.UserGroupName)
+	}
+
+	return c.GetSAMLRole(ctx, roleID)
+}
+
+// UpdateSAMLRole updates an existing SAML role via PUT (full replace).
+func (c *Client) UpdateSAMLRole(ctx context.Context, roleID string, req *SAMLRoleCreateRequest) (*SAMLRole, error) {
+	url := c.globalURL(fmt.Sprintf("/extendUserGroups/%s", roleID))
+	_, err := c.doRequest(ctx, http.MethodPut, url, req)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.GetSAMLRole(ctx, roleID)
+}
+
+// DeleteSAMLRole deletes a SAML external user group.
+func (c *Client) DeleteSAMLRole(ctx context.Context, roleID string) error {
+	url := c.globalURL(fmt.Sprintf("/extendUserGroups/%s", roleID))
+	_, err := c.doRequest(ctx, http.MethodDelete, url, nil)
+	return err
+}
