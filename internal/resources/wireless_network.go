@@ -2,6 +2,7 @@ package resources
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -274,39 +275,74 @@ func (r *WirelessNetworkResource) Update(ctx context.Context, req resource.Updat
 	wlanGroupID := state.WlanGroupID.ValueString()
 	ssidID := state.ID.ValueString()
 
-	// Fetch the full raw SSID object (PATCH requires the complete object)
-	rawSSID, err := r.client.GetWirelessNetworkRaw(ctx, siteID, wlanGroupID, ssidID)
-	if err != nil {
-		resp.Diagnostics.AddError("Error fetching wireless network for update", err.Error())
-		return
+	// Build a structured update payload (same shape as Create) rather than
+	// patching the raw GET response — avoids sending back read-only or
+	// unrecognized fields that cause -1001 errors.
+	ssid := &client.WirelessNetwork{
+		Name:               plan.Name.ValueString(),
+		Band:               int(plan.Band.ValueInt64()),
+		Security:           int(plan.Security.ValueInt64()),
+		Broadcast:          plan.Broadcast.ValueBool(),
+		Enable11r:          plan.Enable11r.ValueBool(),
+		PmfMode:            int(plan.PmfMode.ValueInt64()),
+		WlanScheduleEnable: false,
+		MacFilterEnable:    false,
+		RateLimit:          &client.RateLimit{},
+		SSIDRateLimit:      &client.RateLimit{},
+		RateAndBeaconCtrl:  &client.RateAndBeaconCtrl{},
+		MultiCastSetting: &client.MultiCastSetting{
+			MultiCastEnable: true,
+			ChannelUtil:     100,
+			ArpCastEnable:   true,
+			Ipv6CastEnable:  true,
+		},
 	}
 
-	// Apply changes from the plan onto the raw object
-	rawSSID["name"] = plan.Name.ValueString()
-	rawSSID["band"] = int(plan.Band.ValueInt64())
-	rawSSID["security"] = int(plan.Security.ValueInt64())
-	rawSSID["broadcast"] = plan.Broadcast.ValueBool()
-	rawSSID["enable11r"] = plan.Enable11r.ValueBool()
-	rawSSID["pmfMode"] = int(plan.PmfMode.ValueInt64())
-
 	if !plan.Passphrase.IsNull() && !plan.Passphrase.IsUnknown() {
-		rawSSID["pskSetting"] = map[string]interface{}{
-			"versionPsk":    2,
-			"encryptionPsk": 3,
-			"securityKey":   plan.Passphrase.ValueString(),
+		ssid.PSKSetting = &client.PSKSetting{
+			VersionPsk:    2,
+			EncryptionPsk: 3,
+			SecurityKey:   plan.Passphrase.ValueString(),
 		}
 	}
 
 	if !plan.VlanID.IsNull() && !plan.VlanID.IsUnknown() {
-		rawSSID["vlanSetting"] = map[string]interface{}{
-			"mode": 1,
-			"customConfig": map[string]interface{}{
-				"bridgeVlan": int(plan.VlanID.ValueInt64()),
-			},
+		vlanID := int(plan.VlanID.ValueInt64())
+		customConfig := &client.CustomConfig{
+			BridgeVlan: vlanID,
 		}
+		networks, listErr := r.client.ListNetworks(ctx, siteID)
+		if listErr == nil {
+			for _, n := range networks {
+				if n.Vlan == vlanID {
+					customConfig.LanNetworkID = n.ID
+					customConfig.LanNetworkVlanIds = map[string][]int{
+						n.ID: {vlanID},
+					}
+					break
+				}
+			}
+		}
+		ssid.VlanSetting = &client.VlanSetting{
+			Mode:         1,
+			CustomConfig: customConfig,
+		}
+	} else {
+		ssid.VlanSetting = &client.VlanSetting{Mode: 0}
 	}
 
-	updated, err := r.client.UpdateWirelessNetwork(ctx, siteID, wlanGroupID, ssidID, rawSSID)
+	jsonBytes, err := json.Marshal(ssid)
+	if err != nil {
+		resp.Diagnostics.AddError("Error marshaling update payload", err.Error())
+		return
+	}
+	var updatePayload map[string]interface{}
+	if err := json.Unmarshal(jsonBytes, &updatePayload); err != nil {
+		resp.Diagnostics.AddError("Error preparing update payload", err.Error())
+		return
+	}
+
+	updated, err := r.client.UpdateWirelessNetwork(ctx, siteID, wlanGroupID, ssidID, updatePayload)
 	if err != nil {
 		resp.Diagnostics.AddError("Error updating wireless network", err.Error())
 		return
