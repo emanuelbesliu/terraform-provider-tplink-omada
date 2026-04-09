@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.1.0](https://github.com/emanuelbesliu/terraform-provider-tplink-omada/compare/v2.0.2...v2.1.0) (2026-04-09)
+
+
+### Features
+
+* add omada_controller_certificate resource for TLS certificate management ([2f3f5c7](https://github.com/emanuelbesliu/terraform-provider-tplink-omada/commit/2f3f5c757df5805299b2c4b7f093f4535b775f16))
+* **saml:** add SAML IdP and SAML Role resources ([4cfdf80](https://github.com/emanuelbesliu/terraform-provider-tplink-omada/commit/4cfdf80de30a075f36b2bf540e20da163565508d))
+
 ## [2.0.1](https://github.com/emanuelbesliu/terraform-provider-tplink-omada/compare/v2.0.0...v2.0.1) (2026-04-01)
 
 
