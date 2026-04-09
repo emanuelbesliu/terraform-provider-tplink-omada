@@ -7,9 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
-	"mime/multipart"
 	"strings"
 	"sync"
 	"time"
@@ -2029,17 +2029,19 @@ func (c *Client) ListSAMLRoles(ctx context.Context) ([]SAMLRole, error) {
 }
 
 // GetSAMLRole returns a single SAML role by ID.
+// The Omada API does not support GET /extendUserGroups/{id}, so we list all
+// roles and filter by ID.
 func (c *Client) GetSAMLRole(ctx context.Context, roleID string) (*SAMLRole, error) {
-	url := c.globalURL(fmt.Sprintf("/extendUserGroups/%s", roleID))
-	resp, err := c.doRequest(ctx, http.MethodGet, url, nil)
+	roles, err := c.ListSAMLRoles(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("listing SAML roles to find %s: %w", roleID, err)
 	}
-	var role SAMLRole
-	if err := json.Unmarshal(resp.Result, &role); err != nil {
-		return nil, fmt.Errorf("decoding SAML role: %w", err)
+	for _, r := range roles {
+		if r.ID == roleID {
+			return &r, nil
+		}
 	}
-	return &role, nil
+	return nil, fmt.Errorf("SAML role %s not found", roleID)
 }
 
 // CreateSAMLRole creates a new SAML external user group.
