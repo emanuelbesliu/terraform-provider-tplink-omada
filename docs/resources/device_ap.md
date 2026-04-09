@@ -3,12 +3,12 @@
 page_title: "omada_device_ap Resource - omada"
 subcategory: ""
 description: |-
-  Manages the configuration of an Omada AP device. APs are physical devices that must be adopted through the controller UI before they can be managed. Use 'terraform import' to bring an adopted AP into state. Delete removes from Terraform state only.
+  Manages the configuration of an Omada AP device. APs must be adopted through the controller UI before they can be managed. Use 'terraform import omada_device_ap. /' to bring an adopted AP into state.
 ---
 
 # omada_device_ap (Resource)
 
-Manages the configuration of an Omada AP device. APs are physical devices that must be adopted through the controller UI before they can be managed. Use `terraform import` to bring an adopted AP into state. Delete removes from Terraform state only.
+Manages the configuration of an Omada AP device. APs must be adopted through the controller UI before they can be managed. Use 'terraform import omada_device_ap.<name> <siteID>/<mac>' to bring an adopted AP into state.
 
 ## Example Usage
 
@@ -52,6 +52,10 @@ resource "omada_device_ap" "example" {
 
 ### Optional
 
+- `ip_setting_fallback` (Boolean) Enable fallback static IP when DHCP fails (dhcp mode only).
+- `ip_setting_fallback_gate` (String) Fallback gateway IP (used when ip_setting_fallback = true).
+- `ip_setting_fallback_ip` (String) Fallback static IP address (used when ip_setting_fallback = true).
+- `ip_setting_fallback_mask` (String) Fallback subnet mask (used when ip_setting_fallback = true).
 - `ip_setting_mode` (String) IP address mode: 'dhcp' or 'static'.
 - `l3_access_enable` (Boolean) Enable L3 management access.
 - `lb_2g_enable` (Boolean) Enable load balancing on 2.4GHz.
@@ -66,13 +70,13 @@ resource "omada_device_ap" "example" {
 - `name` (String) The display name of the AP.
 - `ofdma_enable_2g` (Boolean) Enable OFDMA on 2.4GHz.
 - `ofdma_enable_5g` (Boolean) Enable OFDMA on 5GHz.
-- `radio_2g_channel` (String) 2.4GHz channel (e.g., '0' for auto, '1'-'11' for specific).
-- `radio_2g_channel_width` (String) 2.4GHz channel width (e.g., '0' for auto, '1' for 20MHz, '2' for 40MHz).
+- `radio_2g_channel` (String) 2.4GHz channel (0 for auto).
+- `radio_2g_channel_width` (String) 2.4GHz channel width. RADIO_20=2; RADIO_40=3; RADIO_40_20=4 (Auto).
 - `radio_2g_enable` (Boolean) Enable 2.4GHz radio.
 - `radio_2g_tx_power` (Number) 2.4GHz TX power in dBm (used when tx_power_level=3/Custom).
 - `radio_2g_tx_power_level` (Number) 2.4GHz TX power level: 0=Low, 1=Medium, 2=High, 3=Custom, 4=Auto.
-- `radio_5g_channel` (String) 5GHz channel (e.g., '0' for auto, specific channel numbers).
-- `radio_5g_channel_width` (String) 5GHz channel width (e.g., '0' for auto, '2' for 40MHz, '4' for 80MHz).
+- `radio_5g_channel` (String) 5GHz channel (0 for auto).
+- `radio_5g_channel_width` (String) 5GHz channel width. RADIO_80=5; RADIO_80_40_20=6 (Auto); RADIO_160=7.
 - `radio_5g_enable` (Boolean) Enable 5GHz radio. Null on 2.4GHz-only APs.
 - `radio_5g_tx_power` (Number) 5GHz TX power in dBm (used when tx_power_level=3/Custom).
 - `radio_5g_tx_power_level` (Number) 5GHz TX power level: 0=Low, 1=Medium, 2=High, 3=Custom, 4=Auto.
@@ -87,7 +91,7 @@ resource "omada_device_ap" "example" {
 - `firmware_version` (String) The AP firmware version. Read-only.
 - `id` (String) The AP MAC address (set by import).
 - `ip` (String) The AP IP address. Read-only.
-- `model` (String) The AP model (e.g., 'EAP655-Wall'). Read-only.
+- `model` (String) The AP model. Read-only.
 - `site_id` (String) The site ID this device belongs to. Set by import, not configurable.
 
 ## Import
@@ -97,6 +101,6 @@ Import is supported using the following syntax:
 The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
 
 ```shell
-# Import by siteID/mac
-terraform import omada_device_ap.example 696a40fd49039e1d13a9c3f9/9C-A2-F4-00-08-12
+# Import by MAC address
+terraform import omada_device_ap.example 9C-A2-F4-00-08-12
 ```

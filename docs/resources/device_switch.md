@@ -3,12 +3,12 @@
 page_title: "omada_device_switch Resource - omada"
 subcategory: ""
 description: |-
-  Manages the configuration of an Omada managed switch. Switches are physical devices that must be adopted through the controller UI before they can be managed. Use 'terraform import' to bring an adopted switch into state. Delete removes from Terraform state only.
+  Manages the configuration of an Omada managed switch. Switches must be adopted through the controller UI before they can be managed. Use 'terraform import omada_device_switch. /' to bring an adopted switch into state.
 ---
 
 # omada_device_switch (Resource)
 
-Manages the configuration of an Omada managed switch. Switches are physical devices that must be adopted through the controller UI before they can be managed. Use `terraform import` to bring an adopted switch into state. Delete removes from Terraform state only.
+Manages the configuration of an Omada managed switch. Switches must be adopted through the controller UI before they can be managed. Use 'terraform import omada_device_switch.<name> <siteID>/<mac>' to bring an adopted switch into state.
 
 ## Example Usage
 
@@ -35,18 +35,19 @@ resource "omada_device_switch" "example" {
   # Jumbo frames
   jumbo = 1518
 
-  # Port configuration
-  ports {
-    port       = 1
-    name       = "Uplink"
-    profile_id = omada_port_profile.trunk.id
-  }
-
-  ports {
-    port       = 2
-    name       = "AP-Office"
-    profile_id = omada_port_profile.ap_access.id
-  }
+# Port configuration
+  ports = [
+    {
+      port       = 1
+      name       = "Uplink"
+      profile_id = omada_port_profile.trunk.id
+    },
+    {
+      port       = 2
+      name       = "AP-Office"
+      profile_id = omada_port_profile.ap_access.id
+    },
+  ]
 }
 ```
 
@@ -56,11 +57,12 @@ resource "omada_device_switch" "example" {
 ### Optional
 
 - `ip_setting_fallback` (Boolean) Enable fallback IP when DHCP fails.
+- `ip_setting_fallback_gate` (String) Fallback gateway IP address.
 - `ip_setting_fallback_ip` (String) Fallback IP address.
 - `ip_setting_fallback_mask` (String) Fallback subnet mask.
 - `ip_setting_mode` (String) IP address mode: 'dhcp' or 'static'.
-- `jumbo` (Number) Jumbo frame size (default 1518).
-- `lag_hash_alg` (Number) LAG hash algorithm.
+- `jumbo` (Number) Jumbo frame size in bytes. Not supported on all models.
+- `lag_hash_alg` (Number) LAG hash algorithm. Not supported on all models.
 - `led_setting` (Number) LED setting: 0=Off, 1=On, 2=Follow site setting.
 - `loopback_detect_enable` (Boolean) Enable loopback detection.
 - `management_vlan_network_id` (String) The LAN network ID used for management VLAN.
@@ -68,20 +70,20 @@ resource "omada_device_switch" "example" {
 - `ports` (Attributes List) Switch port configurations. All ports must be specified on import. (see [below for nested schema](#nestedatt--ports))
 - `snmp_contact` (String) SNMP contact string.
 - `snmp_location` (String) SNMP location string.
-- `stp` (Number) STP mode: 2=Follow site setting.
-- `stp_forward_delay` (Number) STP forward delay in seconds (default 15).
-- `stp_hello_time` (Number) STP hello time in seconds (default 2).
-- `stp_max_age` (Number) STP max age in seconds (default 20).
-- `stp_max_hops` (Number) STP max hops (default 20).
-- `stp_priority` (Number) STP bridge priority (default 32768).
-- `stp_tx_hold_count` (Number) STP TX hold count (default 5).
+- `stp` (Number) STP mode: 0=disabled, 1=STP, 2=RSTP. Not supported on all models.
+- `stp_forward_delay` (Number) STP forward delay in seconds. Not supported on all models.
+- `stp_hello_time` (Number) STP hello time in seconds. Not supported on all models.
+- `stp_max_age` (Number) STP max age in seconds. Not supported on all models.
+- `stp_max_hops` (Number) STP max hops. Not supported on all models.
+- `stp_priority` (Number) STP bridge priority. Not supported on all models.
+- `stp_tx_hold_count` (Number) STP TX hold count. Not supported on all models.
 
 ### Read-Only
 
 - `firmware_version` (String) The switch firmware version. Read-only.
 - `id` (String) The switch MAC address (set by import).
 - `ip` (String) The switch IP address. Read-only.
-- `model` (String) The switch model (e.g., 'TL-SG3428MP'). Read-only.
+- `model` (String) The switch model. Read-only.
 - `site_id` (String) The site ID this device belongs to. Set by import, not configurable.
 
 <a id="nestedatt--ports"></a>
@@ -112,6 +114,6 @@ Import is supported using the following syntax:
 The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
 
 ```shell
-# Import by siteID/mac
-terraform import omada_device_switch.example 696a40fd49039e1d13a9c3f9/10-27-F5-AA-BB-CC
+# Import by MAC address
+terraform import omada_device_switch.example 10-27-F5-AA-BB-CC
 ```

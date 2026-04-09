@@ -3,7 +3,7 @@
 page_title: "omada_site_settings Resource - omada"
 subcategory: ""
 description: |-
-  Manages the settings for an Omada site.
+  Manages the settings for an Omada site. This is a singleton resource — each site has exactly one settings object. Creating this resource adopts the existing settings and applies your configuration. Destroying it removes the resource from Terraform state without changing settings on the controller.
 ---
 
 # omada_site_settings (Resource)
@@ -13,6 +13,10 @@ Manages the settings for an Omada site. This is a singleton resource — each si
 ## Example Usage
 
 ```terraform
+# Site settings is a singleton resource -- each site has exactly one.
+# Creating this resource adopts the existing settings.
+# Destroying it removes the resource from Terraform state without
+# changing settings on the controller.
 resource "omada_site_settings" "example" {
   site_id = omada_site.example.id
 
@@ -103,6 +107,7 @@ Import is supported using the following syntax:
 The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
 
 ```shell
-# Import by site ID
-terraform import omada_site_settings.example 696a40fd49039e1d13a9c3f9
+# Import by any string (the import ID is ignored; settings are read
+# from the provider's configured site).
+terraform import omada_site_settings.example settings
 ```

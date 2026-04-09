@@ -44,8 +44,8 @@ Read-Only:
 - `ip` (String) The device IP address.
 - `mac` (String) The device MAC address.
 - `mem_util` (Number) Memory utilization percentage.
-- `model` (String) The device model (e.g., 'EAP655-Wall').
+- `model` (String) The device model.
 - `name` (String) The device display name.
-- `status` (Number) Device status code (14=connected, 0=disconnected).
+- `status` (Number) Device status code.
 - `status_category` (Number) Device status category.
 - `type` (String) Device type: 'ap', 'switch', or 'gateway'.

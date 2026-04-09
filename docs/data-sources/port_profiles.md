@@ -3,12 +3,12 @@
 page_title: "omada_port_profiles Data Source - omada"
 subcategory: ""
 description: |-
-  Lists all switch port profiles on the Omada Controller for a given site.
+  Lists all switch port profiles on the Omada Controller for the given site.
 ---
 
 # omada_port_profiles (Data Source)
 
-Lists all switch port profiles on the Omada Controller for a given site.
+Lists all switch port profiles on the Omada Controller for the given site.
 
 ## Example Usage
 
@@ -38,10 +38,10 @@ output "port_profiles" {
 
 Read-Only:
 
-- `dot1x` (Number) 802.1X: 0=port-based, 1=mac-based, 2=disabled.
+- `dot1x` (Number) 802.1X setting.
 - `id` (String) The port profile ID.
 - `name` (String) The port profile name.
 - `native_network_id` (String) The native (untagged) network ID.
-- `poe` (Number) PoE setting: 0=disabled, 1=enabled, 2=use profile default.
+- `poe` (Number) PoE setting.
 - `tag_network_ids` (List of String) Tagged network IDs.
-- `type` (Number) Profile type: 0=All, 1=Disable, 2=Custom.
+- `type` (Number) Profile type.

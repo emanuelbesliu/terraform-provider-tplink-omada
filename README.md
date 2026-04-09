@@ -8,10 +8,12 @@ A Terraform provider for managing [TP-Link Omada Software Controller](https://ww
 - [Go](https://golang.org/doc/install) >= 1.23 (to build the provider)
 - TP-Link Omada Software Controller 6.x
 
+
 ## Resources
 
 | Resource | Description |
 |---|---|
+| `omada_controller_certificate` | Manages the TLS certificate for the Omada SDN Controller |
 | `omada_site` | Manages sites on the controller |
 | `omada_network` | Manages LAN networks (VLANs) |
 | `omada_wireless_network` | Manages wireless SSIDs |

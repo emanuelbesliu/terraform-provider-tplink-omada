@@ -57,6 +57,6 @@ Import is supported using the following syntax:
 The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
 
 ```shell
-# Import by siteID/profileID
-terraform import omada_port_profile.example 696a40fd49039e1d13a9c3f9/696a419049039e1d13a9c510
+# Import by port profile ID
+terraform import omada_port_profile.example 696a419049039e1d13a9c510
 ```

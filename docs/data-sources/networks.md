@@ -3,12 +3,12 @@
 page_title: "omada_networks Data Source - omada"
 subcategory: ""
 description: |-
-  Lists all LAN networks on the Omada Controller for a given site.
+  Lists all LAN networks on the Omada Controller for the given site.
 ---
 
 # omada_networks (Data Source)
 
-Lists all LAN networks on the Omada Controller for a given site.
+Lists all LAN networks on the Omada Controller for the given site.
 
 ## Example Usage
 
@@ -39,7 +39,7 @@ output "networks" {
 Read-Only:
 
 - `dhcp_enabled` (Boolean) Whether DHCP is enabled.
-- `gateway_subnet` (String) The gateway IP and subnet in CIDR notation (e.g., '192.168.0.1/24').
+- `gateway_subnet` (String) The gateway IP and subnet in CIDR notation.
 - `id` (String) The network ID.
 - `name` (String) The network name.
 - `purpose` (String) The network purpose ('interface' or 'vlan').

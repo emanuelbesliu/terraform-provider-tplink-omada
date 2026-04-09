@@ -62,6 +62,6 @@ Import is supported using the following syntax:
 The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
 
 ```shell
-# Import by siteID/wlanGroupID/ssidID
-terraform import omada_wireless_network.example 696a40fd49039e1d13a9c3f9/696a40fd49039e1d13a9c412/696a419049039e1d13a9c4d3
+# Import by wlan_group_id/ssid_id
+terraform import omada_wireless_network.example 696a40fd49039e1d13a9c412/696a419049039e1d13a9c4d3
 ```

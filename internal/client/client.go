@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/cookiejar"
+	"mime/multipart"
 	"strings"
 	"sync"
 	"time"
@@ -2084,4 +2085,240 @@ func (c *Client) DeleteSAMLRole(ctx context.Context, roleID string) error {
 	url := c.globalURL(fmt.Sprintf("/extendUserGroups/%s", roleID))
 	_, err := c.doRequest(ctx, http.MethodDelete, url, nil)
 	return err
+}
+
+// ControllerCertificate holds certificate metadata.
+type ControllerCertificate struct {
+	CertID      string `json:"cerId,omitempty"`
+	KeyID       string `json:"keyId,omitempty"`
+	CertName    string `json:"certName,omitempty"`
+	SubjectName string `json:"subjectName,omitempty"`
+	IssuedTo    string `json:"issuedTo,omitempty"`
+	IssuedBy    string `json:"issuedBy,omitempty"`
+	NotBefore   int64  `json:"notBefore,omitempty"`
+	NotAfter    int64  `json:"notAfter,omitempty"`
+	Serial      string `json:"serial,omitempty"`
+	Fingerprint string `json:"fingerprint,omitempty"`
+	KeySize     int    `json:"keySize,omitempty"`
+}
+
+// UploadCertificateResponse holds the response when uploading a certificate or key.
+type UploadCertificateResponse struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// UploadCertificate uploads a PEM-encoded certificate file to the controller.
+// The controller stores it and returns a certificate ID.
+func (c *Client) UploadCertificate(ctx context.Context, certPEM []byte, fileName string) (string, error) {
+	if c.readOnly {
+		return "", ErrReadOnly
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.ensureAuth(ctx); err != nil {
+		return "", err
+	}
+
+	url := fmt.Sprintf("%s/%s/api/v2/files/controller/certificate", c.baseURL, c.omadacID)
+
+	// Create multipart form data
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	// Add the certificate file
+	part, err := writer.CreateFormFile("file", fileName)
+	if err != nil {
+		return "", fmt.Errorf("creating form file: %w", err)
+	}
+	if _, err := part.Write(certPEM); err != nil {
+		return "", fmt.Errorf("writing cert to form: %w", err)
+	}
+
+	// Add metadata field (empty or minimal JSON)
+	if err := writer.WriteField("data", "{}"); err != nil {
+		return "", fmt.Errorf("writing form field: %w", err)
+	}
+
+	if err := writer.Close(); err != nil {
+		return "", fmt.Errorf("closing multipart writer: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
+	if err != nil {
+		return "", fmt.Errorf("creating request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Csrf-Token", c.token)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("uploading certificate: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("reading response: %w", err)
+	}
+
+	var apiResp APIResponse
+	if err := json.Unmarshal(respBody, &apiResp); err != nil {
+		return "", fmt.Errorf("parsing response: %w", err)
+	}
+
+	if apiResp.ErrorCode != 0 {
+		return "", fmt.Errorf("upload failed: errorCode=%d, msg=%s", apiResp.ErrorCode, apiResp.Msg)
+	}
+
+	var uploadResp UploadCertificateResponse
+	if err := json.Unmarshal(apiResp.Result, &uploadResp); err != nil {
+		return "", fmt.Errorf("parsing upload response: %w", err)
+	}
+
+	return uploadResp.ID, nil
+}
+
+// UploadKey uploads a PEM-encoded private key file to the controller.
+// The controller stores it and returns a key ID.
+func (c *Client) UploadKey(ctx context.Context, keyPEM []byte, fileName string) (string, error) {
+	if c.readOnly {
+		return "", ErrReadOnly
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.ensureAuth(ctx); err != nil {
+		return "", err
+	}
+
+	url := fmt.Sprintf("%s/%s/api/v2/files/controller/key", c.baseURL, c.omadacID)
+
+	// Create multipart form data
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	// Add the key file
+	part, err := writer.CreateFormFile("file", fileName)
+	if err != nil {
+		return "", fmt.Errorf("creating form file: %w", err)
+	}
+	if _, err := part.Write(keyPEM); err != nil {
+		return "", fmt.Errorf("writing key to form: %w", err)
+	}
+
+	// Add metadata field (empty or minimal JSON)
+	if err := writer.WriteField("data", "{}"); err != nil {
+		return "", fmt.Errorf("writing form field: %w", err)
+	}
+
+	if err := writer.Close(); err != nil {
+		return "", fmt.Errorf("closing multipart writer: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
+	if err != nil {
+		return "", fmt.Errorf("creating request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Csrf-Token", c.token)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("uploading key: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("reading response: %w", err)
+	}
+
+	var apiResp APIResponse
+	if err := json.Unmarshal(respBody, &apiResp); err != nil {
+		return "", fmt.Errorf("parsing response: %w", err)
+	}
+
+	if apiResp.ErrorCode != 0 {
+		return "", fmt.Errorf("upload failed: errorCode=%d, msg=%s", apiResp.ErrorCode, apiResp.Msg)
+	}
+
+	var uploadResp UploadCertificateResponse
+	if err := json.Unmarshal(apiResp.Result, &uploadResp); err != nil {
+		return "", fmt.Errorf("parsing upload response: %w", err)
+	}
+
+	return uploadResp.ID, nil
+}
+
+// ActivateCertificate activates the certificate on the controller.
+// This sends a PATCH to /controller/setting with the certificate and key IDs.
+type CertificateSettings struct {
+	CertID string `json:"cerId"`
+	KeyID  string `json:"keyId"`
+}
+
+type ControllerSettingUpdate struct {
+	CertID string `json:"cerId"`
+	KeyID  string `json:"keyId"`
+}
+
+// ActivateCertificate applies the certificate configuration to the controller.
+func (c *Client) ActivateCertificate(ctx context.Context, certID, keyID string) error {
+	if c.readOnly {
+		return ErrReadOnly
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.ensureAuth(ctx); err != nil {
+		return err
+	}
+
+	url := fmt.Sprintf("%s/%s/api/v2/controller/setting", c.baseURL, c.omadacID)
+
+	updateReq := ControllerSettingUpdate{
+		CertID: certID,
+		KeyID:  keyID,
+	}
+
+	_, err := c.doRequest(ctx, http.MethodPatch, url, updateReq)
+	return err
+}
+
+// GetControllerCertificate retrieves the current certificate configuration.
+// Note: The Omada API doesn't have a direct "get certificate" endpoint.
+// This method queries the controller/setting to determine the current cert/key IDs.
+type ControllerSetting struct {
+	CertID string `json:"cerId"`
+	KeyID  string `json:"keyId"`
+}
+
+// GetControllerCertificateSetting retrieves the currently active certificate and key IDs.
+func (c *Client) GetControllerCertificateSetting(ctx context.Context) (*ControllerSetting, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.ensureAuth(ctx); err != nil {
+		return nil, err
+	}
+
+	url := fmt.Sprintf("%s/%s/api/v2/controller/setting", c.baseURL, c.omadacID)
+	resp, err := c.doRequest(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var setting ControllerSetting
+	if err := json.Unmarshal(resp.Result, &setting); err != nil {
+		return nil, fmt.Errorf("decoding controller setting: %w", err)
+	}
+
+	return &setting, nil
 }
