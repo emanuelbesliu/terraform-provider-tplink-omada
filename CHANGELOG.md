@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.1](https://github.com/emanuelbesliu/terraform-provider-tplink-omada/compare/v2.1.0...v2.1.1) (2026-04-09)
+
+
+### Bug Fixes
+
+* **saml:** use list+filter for GetSAMLRole instead of unsupported direct GET ([760c71b](https://github.com/emanuelbesliu/terraform-provider-tplink-omada/commit/760c71b71ce72fa90ef0a5e0239483929cf43acd))
+
 ## [2.1.0](https://github.com/emanuelbesliu/terraform-provider-tplink-omada/compare/v2.0.2...v2.1.0) (2026-04-09)
 
 
