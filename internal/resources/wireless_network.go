@@ -32,6 +32,7 @@ type WirelessNetworkResourceModel struct {
 	Band        types.Int64  `tfsdk:"band"`
 	Security    types.Int64  `tfsdk:"security"`
 	Passphrase  types.String `tfsdk:"passphrase"`
+	PskVersion  types.Int64  `tfsdk:"psk_version"`
 	Broadcast   types.Bool   `tfsdk:"broadcast"`
 	VlanID      types.Int64  `tfsdk:"vlan_id"`
 	Enable11r   types.Bool   `tfsdk:"enable_11r"`
@@ -86,6 +87,11 @@ func (r *WirelessNetworkResource) Schema(_ context.Context, _ resource.SchemaReq
 				Description: "The Wi-Fi password (WPA pre-shared key). Required when security > 0.",
 				Optional:    true,
 				Sensitive:   true,
+			},
+			"psk_version": schema.Int64Attribute{
+				Description: "Omada PSK protocol version bitmask. Common values are 2=WPA2 and 4=WPA2/WPA3 transition mode. When omitted, newly created networks use 2 while existing and imported networks retain the controller value.",
+				Optional:    true,
+				Computed:    true,
 			},
 			"broadcast": schema.BoolAttribute{
 				Description: "Whether the SSID is broadcast (visible). Set false for hidden networks.",
@@ -170,7 +176,7 @@ func (r *WirelessNetworkResource) Create(ctx context.Context, req resource.Creat
 
 	if !plan.Passphrase.IsNull() && !plan.Passphrase.IsUnknown() {
 		ssid.PSKSetting = &client.PSKSetting{
-			VersionPsk:    2,
+			VersionPsk:    pskVersion(plan.PskVersion),
 			EncryptionPsk: 3,
 			SecurityKey:   plan.Passphrase.ValueString(),
 		}
@@ -216,6 +222,11 @@ func (r *WirelessNetworkResource) Create(ctx context.Context, req resource.Creat
 	plan.Broadcast = types.BoolValue(created.Broadcast)
 	plan.Enable11r = types.BoolValue(created.Enable11r)
 	plan.PmfMode = types.Int64Value(int64(created.PmfMode))
+	if created.PSKSetting != nil {
+		plan.PskVersion = types.Int64Value(int64(created.PSKSetting.VersionPsk))
+	} else {
+		plan.PskVersion = types.Int64Null()
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -253,6 +264,11 @@ func (r *WirelessNetworkResource) Read(ctx context.Context, req resource.ReadReq
 	// Read passphrase from PSKSetting — the v6 API does return securityKey
 	if ssid.PSKSetting != nil && ssid.PSKSetting.SecurityKey != "" {
 		state.Passphrase = types.StringValue(ssid.PSKSetting.SecurityKey)
+	}
+	if ssid.PSKSetting != nil {
+		state.PskVersion = types.Int64Value(int64(ssid.PSKSetting.VersionPsk))
+	} else {
+		state.PskVersion = types.Int64Null()
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -300,7 +316,7 @@ func (r *WirelessNetworkResource) Update(ctx context.Context, req resource.Updat
 
 	if !plan.Passphrase.IsNull() && !plan.Passphrase.IsUnknown() {
 		ssid.PSKSetting = &client.PSKSetting{
-			VersionPsk:    2,
+			VersionPsk:    pskVersion(plan.PskVersion),
 			EncryptionPsk: 3,
 			SecurityKey:   plan.Passphrase.ValueString(),
 		}
@@ -356,6 +372,11 @@ func (r *WirelessNetworkResource) Update(ctx context.Context, req resource.Updat
 	plan.Broadcast = types.BoolValue(updated.Broadcast)
 	plan.Enable11r = types.BoolValue(updated.Enable11r)
 	plan.PmfMode = types.Int64Value(int64(updated.PmfMode))
+	if updated.PSKSetting != nil {
+		plan.PskVersion = types.Int64Value(int64(updated.PSKSetting.VersionPsk))
+	} else {
+		plan.PskVersion = types.Int64Null()
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -402,6 +423,9 @@ func (r *WirelessNetworkResource) ImportState(ctx context.Context, req resource.
 		Enable11r:   types.BoolValue(ssid.Enable11r),
 		PmfMode:     types.Int64Value(int64(ssid.PmfMode)),
 	}
+	if ssid.PSKSetting != nil {
+		state.PskVersion = types.Int64Value(int64(ssid.PSKSetting.VersionPsk))
+	}
 
 	// Read vlan_id from VlanSetting
 	if ssid.VlanSetting != nil && ssid.VlanSetting.CustomConfig != nil && ssid.VlanSetting.CustomConfig.BridgeVlan != 0 {
@@ -420,4 +444,11 @@ func (r *WirelessNetworkResource) ImportState(ctx context.Context, req resource.
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+}
+
+func pskVersion(value types.Int64) int {
+	if value.IsNull() || value.IsUnknown() {
+		return 2
+	}
+	return int(value.ValueInt64())
 }

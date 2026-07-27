@@ -20,6 +20,7 @@ resource "omada_wireless_network" "example" {
   band          = 3 # Both 2.4GHz and 5GHz
   security      = 3 # WPA2/WPA3-Personal
   passphrase    = var.wifi_password
+  psk_version   = 4 # WPA2/WPA3 transition mode
   broadcast     = true
   vlan_id       = 50
   enable_11r    = true # Fast BSS Transition (802.11r)
@@ -47,6 +48,7 @@ variable "wifi_password" {
 - `enable_11r` (Boolean) Enable 802.11r Fast Roaming.
 - `passphrase` (String, Sensitive) The Wi-Fi password (WPA pre-shared key). Required when security > 0.
 - `pmf_mode` (Number) Protected Management Frames mode: 1=disabled, 2=optional, 3=required.
+- `psk_version` (Number) Omada PSK protocol version bitmask. Common values are 2=WPA2 and 4=WPA2/WPA3 transition mode. When omitted, newly created networks use 2 while existing and imported networks retain the controller value.
 - `security` (Number) Security mode: 0=Open, 3=WPA2/WPA3. Note: do NOT use 2 (WPA2-only fails on v6).
 - `vlan_id` (Number) Custom VLAN ID to assign to this SSID. If not set, uses the default VLAN.
 - `wlan_group_id` (String) The WLAN group ID. If not set, the default WLAN group is used.
