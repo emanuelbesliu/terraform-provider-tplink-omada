@@ -142,9 +142,10 @@ var switchPortSchema = schema.NestedAttributeObject{
 			ElementType: types.StringType,
 		},
 		"speed": schema.Int64Attribute{
-			Description: "Port speed: 0=Auto, 1=10M, 2=100M, 3=1000M.",
-			Optional:    true,
-			Computed:    true,
+			Description: "Observed operational port speed reported by the controller, not the configured link speed. " +
+				"Read-only; changes with link negotiation or disconnection. " +
+				"Remove any explicit speed assignments from port configuration when upgrading; existing state values are preserved.",
+			Computed: true,
 		},
 		"voice_network_enable": schema.BoolAttribute{
 			Description: "Enable voice network on this port.",

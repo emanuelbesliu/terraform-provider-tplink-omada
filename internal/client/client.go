@@ -1408,7 +1408,7 @@ type SwitchPort struct {
 	ProfileName           string   `json:"profileName,omitempty"`
 	ProfileOverrideEnable bool     `json:"profileOverrideEnable"`
 	Operation             string   `json:"operation,omitempty"`
-	Speed                 int      `json:"speed"`
+	Speed                 int      `json:"speed"` // Operational speed, not the configured linkSpeed.
 }
 
 // SwitchServiceConfig is the payload for PUT /switches/{mac}/config/service.
