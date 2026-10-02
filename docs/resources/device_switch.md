@@ -101,11 +101,14 @@ Optional:
 - `network_tags_setting` (Number) Network tags setting: 0=from profile, 1=custom.
 - `profile_id` (String) The port profile ID assigned to this port.
 - `profile_override_enable` (Boolean) Whether per-port override of the profile is enabled.
-- `speed` (Number) Port speed: 0=Auto, 1=10M, 2=100M, 3=1000M.
 - `tag_network_ids` (List of String) List of tagged network IDs.
 - `untag_network_ids` (List of String) List of untagged network IDs.
 - `voice_dscp_enable` (Boolean) Enable voice DSCP on this port.
 - `voice_network_enable` (Boolean) Enable voice network on this port.
+
+Read-Only:
+
+- `speed` (Number) Observed operational port speed reported by the controller, not the configured link speed. Read-only; changes with link negotiation or disconnection. Remove any explicit speed assignments from port configuration when upgrading; existing state values are preserved.
 
 ## Import
 
